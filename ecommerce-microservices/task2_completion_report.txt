@@ -1,0 +1,286 @@
+================================================================================
+  TASK 2 – COMPLETION REPORT
+  API Gateway – Node.js Express Application
+  Generated: 2026-08-25
+================================================================================
+
+1. SUMMARY
+--------------------------------------------------------------------------------
+
+  Initialized a Node.js Express API Gateway in the api-gateway/ directory.
+  The gateway acts as the single entry point for all client requests,
+  proxying traffic to downstream microservices with selective Clerk-based
+  JWT authentication.
+
+
+2. FILES CREATED / MODIFIED
+--------------------------------------------------------------------------------
+
+  api-gateway/
+  ├── .env                          [NEW] Environment variables template
+  ├── package.json                  [MOD] Added scripts + dependencies
+  ├── node_modules/                 [GEN] Installed 146 packages
+  └── src/
+      ├── index.js                  [NEW] Express server entry point
+      └── middleware/
+          └── clerkAuth.js          [NEW] Clerk JWT auth middleware
+
+
+3. INSTALLED DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  ┌──────────────────────────────┬──────────────┬────────────────────────────┐
+  │ Package                      │ Version      │ Purpose                    │
+  ├──────────────────────────────┼──────────────┼────────────────────────────┤
+  │ express                      │ ^5.2.1       │ HTTP framework             │
+  │ cors                         │ ^2.8.6       │ Cross-origin requests      │
+  │ dotenv                       │ ^17.4.2      │ Load .env into process.env │
+  │ http-proxy-middleware         │ ^4.2.0       │ Reverse-proxy middleware   │
+  │ @clerk/clerk-sdk-node        │ ^4.13.23     │ JWT auth via Clerk         │
+  └──────────────────────────────┴──────────────┴────────────────────────────┘
+
+
+4. ROUTING & AUTHENTICATION MATRIX
+--------------------------------------------------------------------------------
+
+  ┌────────────────────┬──────────────────────────────────┬──────────────────┐
+  │ Gateway Route      │ Upstream Target                  │ Auth Required?   │
+  ├────────────────────┼──────────────────────────────────┼──────────────────┤
+  │ /api/catalog/**    │ http://catalog-cart-service:3001  │ NO (public)      │
+  │ /api/orders/**     │ http://order-service:8080         │ YES (Clerk JWT)  │
+  │ /health            │ (local)                          │ NO               │
+  └────────────────────┴──────────────────────────────────┴──────────────────┘
+
+  Authentication Flow:
+    1. Client sends request with `Authorization: Bearer <token>` header
+    2. clerkAuth middleware extracts the token
+    3. Token is verified via Clerk SDK (clerk.verifyToken)
+    4. On success → `X-User-Id` header is injected and request is proxied
+    5. On failure → 401 Unauthorized JSON response is returned
+
+
+5. CODE DIFF – package.json
+--------------------------------------------------------------------------------
+
+  --- /dev/null
+  +++ api-gateway/package.json
+  @@ -0,0 +1,21 @@
+  +{
+  +  "name": "api-gateway",
+  +  "version": "1.0.0",
+  +  "description": "API Gateway for ecommerce microservices – Express + Clerk + http-proxy-middleware",
+  +  "main": "src/index.js",
+  +  "scripts": {
+  +    "start": "node src/index.js",
+  +    "dev": "node --watch src/index.js",
+  +    "test": "echo \"Error: no test specified\" && exit 1"
+  +  },
+  +  "keywords": [],
+  +  "author": "",
+  +  "license": "ISC",
+  +  "dependencies": {
+  +    "@clerk/clerk-sdk-node": "^4.13.23",
+  +    "cors": "^2.8.6",
+  +    "dotenv": "^17.4.2",
+  +    "express": "^5.2.1",
+  +    "http-proxy-middleware": "^4.2.0"
+  +  }
+  +}
+
+
+6. CODE DIFF – src/index.js
+--------------------------------------------------------------------------------
+
+  --- /dev/null
+  +++ api-gateway/src/index.js
+  @@ -0,0 +1,96 @@
+  +/**
+  + * API Gateway – Entry Point
+  + *
+  + * A lightweight Express gateway that:
+  + *  1. Proxies /api/catalog/** → catalog-cart-service:3001  (public)
+  + *  2. Proxies /api/orders/**  → order-service:8080         (auth required)
+  + *  3. Uses Clerk for JWT-based authentication on protected routes.
+  + */
+  +
+  +require("dotenv").config();
+  +
+  +const express = require("express");
+  +const cors = require("cors");
+  +const { createProxyMiddleware } = require("http-proxy-middleware");
+  +const clerkAuth = require("./middleware/clerkAuth");
+  +
+  +// ─── Configuration ──────────────────────────────────────────────────────
+  +
+  +const PORT = process.env.PORT || 3000;
+  +const CATALOG_SERVICE_URL =
+  +  process.env.CATALOG_SERVICE_URL || "http://catalog-cart-service:3001";
+  +const ORDER_SERVICE_URL =
+  +  process.env.ORDER_SERVICE_URL || "http://order-service:8080";
+  +
+  +// ─── Express App ────────────────────────────────────────────────────────
+  +
+  +const app = express();
+  +
+  +app.use(cors());
+  +
+  +// ─── Health Check ───────────────────────────────────────────────────────
+  +
+  +app.get("/health", (_req, res) => {
+  +  res.json({ status: "ok", service: "api-gateway" });
+  +});
+  +
+  +// ─── Proxy: /api/catalog → Catalog + Cart Service (PUBLIC) ─────────────
+  +
+  +app.use(
+  +  "/api/catalog",
+  +  createProxyMiddleware({
+  +    target: CATALOG_SERVICE_URL,
+  +    changeOrigin: true,
+  +    pathRewrite: { "^/api/catalog": "" },
+  +    on: {
+  +      proxyReq: (proxyReq, req) => {
+  +        console.log(
+  +          `[proxy] ${req.method} ${req.originalUrl} → ${CATALOG_SERVICE_URL}`
+  +        );
+  +      },
+  +      error: (err, req, res) => {
+  +        console.error("[proxy] Catalog proxy error:", err.message);
+  +        res.status(502).json({ error: "Catalog service unavailable" });
+  +      },
+  +    },
+  +  })
+  +);
+  +
+  +// ─── Proxy: /api/orders → Order Service (PROTECTED – Clerk Auth) ──────
+  +
+  +app.use(
+  +  "/api/orders",
+  +  clerkAuth, // ← authentication middleware applied ONLY here
+  +  createProxyMiddleware({
+  +    target: ORDER_SERVICE_URL,
+  +    changeOrigin: true,
+  +    pathRewrite: { "^/api/orders": "" },
+  +    on: {
+  +      proxyReq: (proxyReq, req) => {
+  +        if (req.headers["x-user-id"]) {
+  +          proxyReq.setHeader("X-User-Id", req.headers["x-user-id"]);
+  +        }
+  +        console.log(
+  +          `[proxy] ${req.method} ${req.originalUrl} → ${ORDER_SERVICE_URL}` +
+  +          ` (user: ${req.headers["x-user-id"] || "unknown"})`
+  +        );
+  +      },
+  +      error: (err, req, res) => {
+  +        console.error("[proxy] Order proxy error:", err.message);
+  +        res.status(502).json({ error: "Order service unavailable" });
+  +      },
+  +    },
+  +  })
+  +);
+  +
+  +// ─── 404 Fallback ──────────────────────────────────────────────────────
+  +
+  +app.use((_req, res) => {
+  +  res.status(404).json({ error: "Route not found" });
+  +});
+  +
+  +// ─── Start Server ──────────────────────────────────────────────────────
+  +
+  +app.listen(PORT, () => {
+  +  console.log(`🚀 API Gateway running on http://localhost:${PORT}`);
+  +  console.log(`   /api/catalog  → ${CATALOG_SERVICE_URL}  (public)`);
+  +  console.log(`   /api/orders   → ${ORDER_SERVICE_URL}  (auth required)`);
+  +});
+
+
+7. CODE DIFF – src/middleware/clerkAuth.js
+--------------------------------------------------------------------------------
+
+  --- /dev/null
+  +++ api-gateway/src/middleware/clerkAuth.js
+  @@ -0,0 +1,47 @@
+  +/**
+  + * Clerk Authentication Middleware
+  + *
+  + * Intercepts incoming requests, extracts the Bearer token from the
+  + * Authorization header, and verifies it via Clerk's SDK.
+  + *
+  + * On success → injects `X-User-Id` header and calls next().
+  + * On failure → responds with 401 Unauthorized.
+  + */
+  +
+  +const { createClerkClient } = require("@clerk/clerk-sdk-node");
+  +
+  +const clerk = createClerkClient({
+  +  secretKey: process.env.CLERK_SECRET_KEY,
+  +});
+  +
+  +async function clerkAuth(req, res, next) {
+  +  try {
+  +    const authHeader = req.headers.authorization;
+  +
+  +    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  +      return res.status(401).json({
+  +        error: "Unauthorized",
+  +        message: "Missing or malformed Authorization header.",
+  +      });
+  +    }
+  +
+  +    const token = authHeader.split(" ")[1];
+  +
+  +    // Verify the session token using Clerk's SDK
+  +    const payload = await clerk.verifyToken(token);
+  +
+  +    // Inject user ID into a custom header so downstream services can use it
+  +    req.headers["x-user-id"] = payload.sub;
+  +
+  +    return next();
+  +  } catch (err) {
+  +    console.error("[clerkAuth] Token verification failed:", err.message);
+  +    return res.status(401).json({
+  +      error: "Unauthorized",
+  +      message: "Invalid or expired token.",
+  +    });
+  +  }
+  +}
+  +
+  +module.exports = clerkAuth;
+
+
+8. ENVIRONMENT VARIABLES (.env)
+--------------------------------------------------------------------------------
+
+  PORT=3000
+  CLERK_SECRET_KEY=sk_test_REPLACE_ME      ← Replace with your Clerk key
+  CATALOG_SERVICE_URL=http://catalog-cart-service:3001
+  ORDER_SERVICE_URL=http://order-service:8080
+
+
+9. QUICK START
+--------------------------------------------------------------------------------
+
+  # Development (with auto-reload via --watch):
+  cd api-gateway
+  npm run dev
+
+  # Production:
+  cd api-gateway
+  npm start
+
+  # The server will start on http://localhost:3000
+
+
+10. npm AUDIT NOTE
+--------------------------------------------------------------------------------
+
+  npm reported 5 vulnerabilities (1 low, 4 high) during install.
+  A deprecated @clerk/types@3.65.5 notice was also emitted; Clerk recommends
+  importing types from @clerk/shared/types instead.
+
+  To attempt auto-fix:
+    cd api-gateway && npm audit fix --force
+
+================================================================================
+  END OF REPORT
+================================================================================
