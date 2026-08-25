@@ -1,0 +1,89 @@
+================================================================================
+  TASK 6 – COMPLETION REPORT
+  Inventory Service – Spring Boot 3 + Kafka Application
+  Generated: 2026-08-25
+================================================================================
+
+1. SUMMARY
+--------------------------------------------------------------------------------
+
+  Initialized the inventory-service as a Java Spring Boot 3 application.
+  The service is designed to listen to order creation events, simulate a 
+  stock reservation process, and emit a reserved event to Kafka. 
+  It shares the PostgreSQL database and Kafka infrastructure setup.
+
+2. PROJECT STRUCTURE
+--------------------------------------------------------------------------------
+
+  inventory-service/
+  ├── pom.xml                               Maven dependencies
+  ├── mvnw / mvnw.cmd                       Maven wrapper executables
+  └── src/main/
+      ├── resources/
+      │   └── application.yml               Configuration properties
+      └── java/com/ecommerce/inventoryservice/
+          ├── InventoryServiceApplication.java  Spring Boot entry point
+          ├── controller/
+          │   └── InventoryController.java      REST endpoint (Health Check)
+          ├── event/
+          │   ├── OrderCreatedEvent.java        Incoming Kafka event payload
+          │   └── InventoryReservedEvent.java   Outgoing Kafka event payload
+          └── service/
+              ├── InventoryEventConsumer.java   Kafka listener for orders
+              └── InventoryEventProducer.java   Kafka publisher for inventory
+
+
+3. DATABASE CONFIGURATION (application.yml)
+--------------------------------------------------------------------------------
+
+  Database:   PostgreSQL
+  URL:        jdbc:postgresql://localhost:5432/ecom_db
+  User:       ecom_user
+  Password:   ecom_pass
+  JPA DDL:    update (Hibernate auto-creates/updates tables)
+
+
+4. KAFKA CONFIGURATION
+--------------------------------------------------------------------------------
+
+  Bootstrap Servers: localhost:9092
+  
+  Consumer:
+    Group ID:       inventory-group
+    Topic:          order-created-topic
+    Deserializers:  StringDeserializer (Key), JsonDeserializer (Value)
+    Trusted Pkgs:   "*"
+
+  Producer:
+    Topic:          inventory-reserved-topic
+    Serializers:    StringSerializer (Key), JsonSerializer (Value)
+
+  Workflow:
+  1. InventoryEventConsumer listens to 'order-created-topic'.
+  2. Upon receiving an OrderCreatedEvent, it simulates processing delay (500ms).
+  3. It constructs an InventoryReservedEvent with status "RESERVED".
+  4. InventoryEventProducer publishes this event to 'inventory-reserved-topic'.
+
+
+5. REST API ENDPOINTS
+--------------------------------------------------------------------------------
+
+  GET /health
+    Description: Simple health check endpoint on port 8081.
+    Response:    200 OK {"status":"ok", "service":"inventory-service"}
+
+
+6. QUICK START
+--------------------------------------------------------------------------------
+
+  # Ensure infrastructure (Postgres, Kafka) is running
+  cd ecommerce-microservices
+  docker compose up -d
+
+  # Start the inventory-service using Maven wrapper
+  cd inventory-service
+  ./mvnw spring-boot:run
+
+================================================================================
+  END OF REPORT
+================================================================================
