@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+/* ─── Neo-Brutalism Design Tokens ───────────────────────────────────────────── */
+
+@theme {
+  --color-brutal-yellow: #FFE566;
+  --color-brutal-pink: #FF6B9D;
+  --color-brutal-blue: #6CB4EE;
+  --color-brutal-green: #77DD77;
+  --color-brutal-orange: #FFB347;
+  --color-brutal-lilac: #C3B1E1;
+  --color-brutal-bg: #FFFDF0;
+  --color-brutal-black: #1A1A1A;
+}
+
+/* ─── Base Reset ────────────────────────────────────────────────────────────── */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: "Space Grotesk", "Inter", system-ui, sans-serif;
+  background-color: var(--color-brutal-bg);
+  color: var(--color-brutal-black);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Scrollbar ─────────────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-brutal-bg);
+  border-left: 3px solid var(--color-brutal-black);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-brutal-black);
+}
