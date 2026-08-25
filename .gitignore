@@ -1,0 +1,30 @@
+# Environment Variables
+.env
+*.env
+
+# Node.js
+node_modules/
+npm-debug.log
+
+# Java / Spring Boot
+target/
+*.jar
+*.war
+.mvn/
+!/.mvn/wrapper/maven-wrapper.jar
+
+# Python (Notification Worker)
+__pycache__/
+venv/
+*.pyc
+
+# IDEs & OS Files
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Local Docker Volumes (if you decide to map them to local folders later)
+postgres-data/
+mongo-data/
+redis-data/
