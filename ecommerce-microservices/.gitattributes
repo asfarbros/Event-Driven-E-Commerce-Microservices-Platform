@@ -1,0 +1,23 @@
+# Normalise line endings in the repo (LF) and let git decide per platform on checkout
+* text=auto
+
+# Shell scripts run inside Linux containers (Postgres init, entrypoints, mvnw).
+# CRLF corrupts them ("bad interpreter", "\r: command not found"), so force LF
+# regardless of core.autocrlf on Windows.
+*.sh      text eol=lf
+mvnw      text eol=lf
+Dockerfile text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+.env.example text eol=lf
+
+# Windows batch files must stay CRLF
+*.cmd     text eol=crlf
+*.bat     text eol=crlf
+
+# Binaries — never touch
+*.jar     binary
+*.png     binary
+*.jpg     binary
+*.gif     binary
+*.ico     binary

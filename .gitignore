@@ -1,30 +1,43 @@
-# Environment Variables
+# Environment Variables — real values never leave the machine
 .env
+.env.*
 *.env
+# ...but the template is part of the repo
+!.env.example
 
 # Node.js
 node_modules/
 npm-debug.log
+yarn-error.log
+dist/
+coverage/
 
 # Java / Spring Boot
 target/
 *.jar
 *.war
-.mvn/
-!/.mvn/wrapper/maven-wrapper.jar
+# .mvn/wrapper/* must stay tracked so ./mvnw works on a fresh clone
+!**/.mvn/wrapper/maven-wrapper.jar
 
-# Python (Notification Worker)
+# Python (any helper scripts / tooling)
 __pycache__/
 venv/
 *.pyc
+
+# Logs
+logs/
+*.log
 
 # IDEs & OS Files
 .idea/
 .vscode/
 .DS_Store
+Thumbs.db
 *.swp
 
 # Local Docker Volumes (if you decide to map them to local folders later)
 postgres-data/
 mongo-data/
 redis-data/
+kafka-data/
+rabbitmq-data/
