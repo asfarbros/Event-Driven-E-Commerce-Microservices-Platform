@@ -29,10 +29,9 @@ See [architecture.md](architecture.md) for the data-ownership and messaging rule
 | Payment | Java 17 + Spring Boot 3 | PostgreSQL `payment_db` | Kafka producer + consumer, Razorpay | `PAYMENT_PORT` = 8083 |
 | Notification Worker | Node.js | — | RabbitMQ consumer | `NOTIFICATION_PORT` = 4003 |
 
-> **Step 0 status:** only the folder skeleton, configuration and backing
-> infrastructure exist. The services above are placeholders (see each
-> `services/<name>/README.md`) and are built in the later steps listed at the
-> bottom of this page.
+> **Progress:** Step 0 (infrastructure) and Step 1 (API Gateway) are done.
+> The other services are placeholders (see each `services/<name>/README.md`)
+> and are built in the later steps listed at the bottom of this page.
 
 ## Repository layout
 
@@ -98,6 +97,23 @@ docker compose --env-file .env -f infra/docker-compose.yml down -v
 
 > Tip: on a long-running machine, `docker compose ... restart <service>` restarts
 > one container without touching the others.
+
+## Running the API Gateway (Step 1)
+
+The gateway runs on the host and reads the root `.env`. It needs **real Clerk
+test keys** (`CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` from
+dashboard.clerk.com → API Keys) — the placeholders are rejected at start-up.
+
+```bash
+cd services/api-gateway
+npm install
+npm start            # http://localhost:4000  (GATEWAY_PORT)
+npm test             # 26 integration tests, no infrastructure needed
+```
+
+It starts even when every downstream service is down; those routes answer
+`503 { "error": "service_unavailable" }` until the service exists. Details,
+route table and error catalogue: [services/api-gateway/README.md](../services/api-gateway/README.md).
 
 ## Ports and management UIs
 
@@ -226,7 +242,7 @@ Run these after `up -d`. Kafka takes the longest (~30–40 s to report healthy).
 
 Each step is self-contained and ends with a working, verified piece:
 
-1. **Step 1 — API Gateway** (CORS, Clerk JWT verification, proxy routing, `X-User-Id`).
+1. ~~**Step 1 — API Gateway**~~ ✅ done (CORS, Clerk JWT verification, proxy routing, `X-User-Id`, correlation ids).
 2. **Step 2 — Catalog Service** (MongoDB `catalog_db`).
 3. **Step 3 — Cart Service** (Redis cache-aside over MongoDB `cart_db`).
 4. **Step 4 — Inventory Service** (Spring Boot, `inventory_db`, Kafka topics created here).
