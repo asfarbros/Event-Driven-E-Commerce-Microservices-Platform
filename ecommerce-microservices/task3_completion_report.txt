@@ -104,7 +104,6 @@
   name            │ String   │ Yes      │ trimmed
   description     │ String   │ Yes      │ trimmed
   price           │ Number   │ Yes      │ min: 0
-  stockQuantity   │ Number   │ Yes      │ min: 0, default: 0
   createdAt       │ Date     │ Auto     │ Mongoose timestamps
   updatedAt       │ Date     │ Auto     │ Mongoose timestamps
 

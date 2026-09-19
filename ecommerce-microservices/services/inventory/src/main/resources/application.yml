@@ -1,0 +1,50 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Inventory Service – Application Configuration
+#
+#  Every value comes from environment variables. For local development the
+#  monorepo root .env is imported automatically (see spring.config.import);
+#  when deployed, the same variables are supplied by the runtime instead.
+# ─────────────────────────────────────────────────────────────────────────────
+
+server:
+  port: ${INVENTORY_SERVICE_PORT}
+
+spring:
+  application:
+    name: inventory-service
+
+  config:
+    import: optional:file:../../.env[.properties]
+
+  # ─── PostgreSQL DataSource (inventory_db) ──────────────────────────────────
+  datasource:
+    url: ${INVENTORY_DB_URL}
+    username: ${INVENTORY_DB_USER}
+    password: ${INVENTORY_DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  # ─── JPA / Hibernate ───────────────────────────────────────────────────────
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO}
+    show-sql: ${JPA_SHOW_SQL}
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  # ─── Apache Kafka ──────────────────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    consumer:
+      group-id: inventory-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false

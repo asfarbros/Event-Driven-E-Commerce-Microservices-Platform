@@ -1,0 +1,8 @@
+# Shell scripts are executed inside Linux containers (postgres init) – CRLF
+# line endings would break them, so force LF regardless of the host OS.
+*.sh   text eol=lf
+mvnw   text eol=lf
+
+# Windows batch files must keep CRLF.
+*.cmd  text eol=crlf
+*.bat  text eol=crlf

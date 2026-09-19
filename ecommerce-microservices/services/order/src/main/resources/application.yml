@@ -1,0 +1,43 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Order Service – Application Configuration
+#
+#  Every value comes from environment variables. For local development the
+#  monorepo root .env is imported automatically (see spring.config.import);
+#  when deployed, the same variables are supplied by the runtime instead.
+# ─────────────────────────────────────────────────────────────────────────────
+
+server:
+  port: ${ORDER_SERVICE_PORT}
+
+spring:
+  application:
+    name: order-service
+
+  config:
+    import: optional:file:../../.env[.properties]
+
+  # ─── PostgreSQL DataSource (order_db) ──────────────────────────────────────
+  datasource:
+    url: ${ORDER_DB_URL}
+    username: ${ORDER_DB_USER}
+    password: ${ORDER_DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  # ─── JPA / Hibernate ───────────────────────────────────────────────────────
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO}
+    show-sql: ${JPA_SHOW_SQL}
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  # ─── Apache Kafka ──────────────────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
