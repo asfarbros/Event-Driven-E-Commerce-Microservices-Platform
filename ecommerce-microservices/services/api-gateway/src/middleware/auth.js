@@ -21,7 +21,7 @@ import { HttpError } from '../lib/http-error.js';
 
 const BEARER = /^Bearer\s+(\S+)$/i;
 
-export function createAuthGuard({ clerk, corsOrigins }) {
+export function createAuthGuard({ clerk }) {
   // Explicit client: keys come from validated config (not import-time env
   // reads) and Clerk's telemetry is off so stdout stays pure JSON logs.
   const clerkClient = createClerkClient({
@@ -36,8 +36,12 @@ export function createAuthGuard({ clerk, corsOrigins }) {
     secretKey: clerk.secretKey,
     // Optional: verify JWT signatures locally (no JWKS fetch) when provided.
     ...(clerk.jwtKey ? { jwtKey: clerk.jwtKey } : {}),
-    // Reject tokens minted for a different frontend origin (azp claim check).
-    authorizedParties: corsOrigins,
+    // Optional azp check: when CLERK_AUTHORIZED_PARTIES is set, a token is
+    // only accepted if its `azp` claim is one of those origins. Browser
+    // session tokens carry azp (the frontend origin); tokens minted server-side
+    // (Backend API, tests, machine clients) carry none and would be rejected —
+    // so this is opt-in, not derived from the CORS list.
+    ...(clerk.authorizedParties ? { authorizedParties: clerk.authorizedParties } : {}),
   });
 
   return function requireUser(req, res, next) {
@@ -65,7 +69,10 @@ export function createAuthGuard({ clerk, corsOrigins }) {
       }
 
       if (!auth?.userId) {
-        req.log?.warn('rejected request with invalid, expired or signed-out token');
+        // Clerk attaches the verification outcome to the signed-out auth object;
+        // log it (server-side only) so a rejected token is never a mystery.
+        const debug = typeof auth?.debug === 'function' ? auth.debug() : undefined;
+        req.log?.warn({ reason: debug?.reason ?? 'signed-out', detail: debug?.message }, 'rejected request with invalid, expired or signed-out token');
         return unauthorized('Invalid or expired token');
       }
 

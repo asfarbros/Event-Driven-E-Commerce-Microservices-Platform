@@ -120,6 +120,7 @@ const schema = {
   CLERK_PUBLISHABLE_KEY:        { parse: 'clerkPublishableKey' },
   CLERK_SECRET_KEY:             { parse: 'clerkSecretKey' },
   CLERK_JWT_KEY:                { parse: 'string', optional: true },
+  CLERK_AUTHORIZED_PARTIES:     { parse: 'originList', optional: true },
   GATEWAY_PROXY_TIMEOUT_MS:     { parse: 'int', min: 1 },
   GATEWAY_RATE_LIMIT_WINDOW_MS: { parse: 'int', min: 1 },
   GATEWAY_RATE_LIMIT_MAX:       { parse: 'int', min: 1 },
@@ -167,6 +168,7 @@ export function loadConfig(env = process.env) {
       publishableKey: values.CLERK_PUBLISHABLE_KEY,
       secretKey: values.CLERK_SECRET_KEY,
       jwtKey: values.CLERK_JWT_KEY,
+      authorizedParties: values.CLERK_AUTHORIZED_PARTIES, // undefined → azp claim not enforced
     }),
     proxyTimeoutMs: values.GATEWAY_PROXY_TIMEOUT_MS,
     rateLimit: Object.freeze({ windowMs: values.GATEWAY_RATE_LIMIT_WINDOW_MS, max: values.GATEWAY_RATE_LIMIT_MAX }),

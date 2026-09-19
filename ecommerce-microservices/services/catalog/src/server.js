@@ -1,12 +1,9 @@
 /**
- * HTTP server lifecycle: start, and shut down gracefully.
- *
- * shutdown():
- *   1. stop accepting new connections (server.close)
- *   2. close idle keep-alive connections immediately
- *   3. let in-flight requests finish, up to `shutdownTimeoutMs`
- *   4. after the deadline, force-close whatever is left
- * Resolves with the exit code the caller should use (0 clean, 1 forced).
+ * HTTP server lifecycle — same as the gateway's server.js. shutdown() stops
+ * accepting connections, closes idle keep-alives, waits for in-flight
+ * requests up to the grace period, then force-closes. Resolves with the exit
+ * code to use (0 clean, 1 forced). Closing MongoDB is the caller's job, after
+ * the HTTP side is done (index.js).
  */
 import http from 'node:http';
 
@@ -26,14 +23,12 @@ export function startServer(app, { port, host = '0.0.0.0', shutdownTimeoutMs }, 
     if (shuttingDown) return shuttingDown;
     shuttingDown = new Promise((resolve) => {
       logger.info({ reason, graceMs: shutdownTimeoutMs }, 'shutting down: no longer accepting connections');
-
       const deadline = setTimeout(() => {
         logger.warn('grace period elapsed; closing remaining connections');
         server.closeAllConnections();
         resolve(1);
       }, shutdownTimeoutMs);
       deadline.unref();
-
       server.close(() => {
         clearTimeout(deadline);
         clearInterval(sweep);

@@ -29,9 +29,10 @@ See [architecture.md](architecture.md) for the data-ownership and messaging rule
 | Payment | Java 17 + Spring Boot 3 | PostgreSQL `payment_db` | Kafka producer + consumer, Razorpay | `PAYMENT_PORT` = 8083 |
 | Notification Worker | Node.js | — | RabbitMQ consumer | `NOTIFICATION_PORT` = 4003 |
 
-> **Progress:** Step 0 (infrastructure) and Step 1 (API Gateway) are done.
-> The other services are placeholders (see each `services/<name>/README.md`)
-> and are built in the later steps listed at the bottom of this page.
+> **Progress:** Steps 0 (infrastructure), 1 (API Gateway), 2 (Catalog) and
+> 3 (Cart) are done. The other services are placeholders (see each
+> `services/<name>/README.md`) and are built in the later steps listed at the
+> bottom of this page.
 
 ## Repository layout
 
@@ -114,6 +115,38 @@ npm test             # 26 integration tests, no infrastructure needed
 It starts even when every downstream service is down; those routes answer
 `503 { "error": "service_unavailable" }` until the service exists. Details,
 route table and error catalogue: [services/api-gateway/README.md](../services/api-gateway/README.md).
+
+## Running the Catalog Service (Step 2)
+
+```bash
+cd services/catalog
+npm install
+npm run seed         # 14 demo products into catalog_db (idempotent)
+npm start            # http://localhost:4001  (CATALOG_PORT)
+npm test             # 31 integration tests against catalog_test_db (needs MongoDB up)
+```
+
+With the gateway also running: `curl http://localhost:4000/api/catalog/products`.
+Prices are integers in paise (`priceInPaise` + `currency`) — the money rule and
+the bulk price-lookup contract that Cart and Order will use are in
+[services/catalog/README.md](../services/catalog/README.md).
+
+## Running the Cart Service (Step 3)
+
+```bash
+cd services/cart
+npm install
+npm start            # http://localhost:4002  (CART_PORT) — needs MongoDB; Redis optional; Catalog for prices
+npm test             # 22 integration tests (real MongoDB + Redis, fake Catalog)
+```
+
+Cache-aside (MongoDB `cart_db` is the truth, Redis a TTL copy), no price is
+ever stored, live prices via Catalog behind an opossum circuit breaker, and a
+strict `GET /snapshot` for checkout — all in
+[services/cart/README.md](../services/cart/README.md).
+
+Authenticated end-to-end (`/api/cart` through the gateway) needs a Clerk
+session token; `CLERK_AUTHORIZED_PARTIES` must be empty for server-minted tokens.
 
 ## Ports and management UIs
 
@@ -243,8 +276,8 @@ Run these after `up -d`. Kafka takes the longest (~30–40 s to report healthy).
 Each step is self-contained and ends with a working, verified piece:
 
 1. ~~**Step 1 — API Gateway**~~ ✅ done (CORS, Clerk JWT verification, proxy routing, `X-User-Id`, correlation ids).
-2. **Step 2 — Catalog Service** (MongoDB `catalog_db`).
-3. **Step 3 — Cart Service** (Redis cache-aside over MongoDB `cart_db`).
+2. ~~**Step 2 — Catalog Service**~~ ✅ done (MongoDB `catalog_db`, integer money, bulk price lookup, seed data).
+3. ~~**Step 3 — Cart Service**~~ ✅ done (Redis cache-aside over MongoDB `cart_db`, live prices, circuit breaker, `/snapshot`).
 4. **Step 4 — Inventory Service** (Spring Boot, `inventory_db`, Kafka topics created here).
 5. **Step 5 — Payment Service** (Spring Boot, `payment_db`, Razorpay).
 6. **Step 6 — Order Service** (Spring Boot, `order_db`, saga choreography).

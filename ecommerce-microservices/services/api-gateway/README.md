@@ -115,6 +115,7 @@ malformed. Set `DOTENV_CONFIG_PATH` to point at a different file (tests do).
 | `CORS_ALLOWED_ORIGINS` | Comma-separated bare origins. `*` is rejected. |
 | `CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY` | From dashboard.clerk.com → API Keys. Format is checked at boot — placeholders are rejected. |
 | `CLERK_JWT_KEY` | Optional PEM public key for networkless verification |
+| `CLERK_AUTHORIZED_PARTIES` | Optional comma-separated origins; when set, a token's `azp` claim must match one. Leave empty for server-minted tokens (Backend API, tests), which carry no `azp`. |
 | `CATALOG_SERVICE_URL`, `CART_SERVICE_URL`, `ORDER_SERVICE_URL`, `PAYMENT_SERVICE_URL`, `INVENTORY_SERVICE_URL` | Upstream base URLs (one per route-table entry) |
 | `GATEWAY_PROXY_TIMEOUT_MS` | Max wait for an upstream response before 503 |
 | `GATEWAY_RATE_LIMIT_WINDOW_MS`, `GATEWAY_RATE_LIMIT_MAX` | Rate limit per client IP (`/health` exempt) |
@@ -151,17 +152,19 @@ test/
 ## Testing the authenticated path
 
 The automated tests exercise every rejection path with a format-valid dummy
-key. Proving that a **real** token is accepted and turned into `X-User-Id`
-needs a real Clerk instance:
+key. The accepted path was verified in Step 3 with a real Clerk session token
+minted through the Backend API (create user → create session →
+`POST /v1/sessions/{id}/tokens`) and a full cart cycle through `/api/cart`.
+To repeat it:
 
-1. Put real `pk_test_…` / `sk_test_…` values in the root `.env`.
-2. Sign in on any Clerk-enabled frontend for that instance (or the Clerk
-   dashboard's user impersonation) and copy a session token.
-3. With a downstream service (or the echo fixture) on `CART_SERVICE_URL`:
-   ```bash
-   curl -H "Authorization: Bearer <token>" http://localhost:4000/api/cart
-   ```
-   The service must receive `X-User-Id: user_…` matching the token's `sub`.
+1. Real `pk_test_…` / `sk_test_…` in the root `.env`; `CLERK_AUTHORIZED_PARTIES` empty.
+2. Mint a token: `curl -X POST -H "Authorization: Bearer $CLERK_SECRET_KEY" https://api.clerk.com/v1/sessions/<session_id>/tokens`
+   (or copy one from a signed-in frontend).
+3. `curl -H "Authorization: Bearer <jwt>" http://localhost:4000/api/cart` — the
+   cart service logs `userId` equal to the token's `sub`.
+
+A rejected token's reason (e.g. `token-expired`, `token-invalid-authorized-parties`)
+is logged server-side on the 401 line; the client only sees "Invalid or expired token".
 
 ## Notes
 
