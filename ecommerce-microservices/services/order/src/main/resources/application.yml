@@ -1,0 +1,169 @@
+# =============================================================================
+# Order Service — configuration (every value = an environment variable from the
+# root .env; no defaults here on purpose — config/ConfigGuard fails fast)
+# =============================================================================
+
+spring:
+  application:
+    name: order
+  main:
+    banner-mode: off
+  lifecycle:
+    timeout-per-shutdown-phase: ${ORDER_SHUTDOWN_TIMEOUT_MS}ms
+
+  datasource:
+    url: ${ORDER_DB_URL}
+    username: ${ORDER_DB_USER}
+    password: ${ORDER_DB_PASSWORD}
+    hikari:
+      pool-name: order-pool
+      maximum-pool-size: ${ORDER_DB_POOL_SIZE}
+      connection-init-sql: SET lock_timeout = ${ORDER_LOCK_TIMEOUT_MS}
+      connection-timeout: 10000
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    validate-on-migrate: true
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc.time_zone: UTC
+        default_batch_fetch_size: 50
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    admin:
+      auto-create: false
+      fail-fast: false
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 15000
+        request.timeout.ms: 5000
+        max.block.ms: 5000
+    consumer:
+      group-id: ${ORDER_KAFKA_CONSUMER_GROUP}
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        max.poll.interval.ms: 300000
+        max.poll.records: 50
+    listener:
+      ack-mode: manual_immediate
+      immediate-stop: false
+
+  rabbitmq:
+    addresses: ${RABBITMQ_URL}
+    # Publisher confirms + returns: a publish that the broker did not persist,
+    # or that matched no queue, is reported back instead of silently lost.
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    connection-timeout: 5000
+
+  task:
+    scheduling:
+      thread-name-prefix: sched-
+      pool:
+        size: 2
+      shutdown:
+        await-termination: true
+        await-termination-period: ${ORDER_SHUTDOWN_TIMEOUT_MS}ms
+
+server:
+  port: ${ORDER_PORT}
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-exception: false
+    include-binding-errors: never
+    whitelabel:
+      enabled: false
+  max-http-request-header-size: 16KB
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+
+# -----------------------------------------------------------------------------
+# Service-specific settings (bound to config/OrderProperties)
+# -----------------------------------------------------------------------------
+order:
+  db-name: ${ORDER_DB_NAME}
+  price-change-policy: ${ORDER_PRICE_CHANGE_POLICY}
+  page-limit-default: ${ORDER_PAGE_LIMIT_DEFAULT}
+  page-limit-max: ${ORDER_PAGE_LIMIT_MAX}
+  clients:
+    cart-url: ${CART_SERVICE_URL}
+    catalog-url: ${CATALOG_SERVICE_URL}
+    inventory-url: ${INVENTORY_SERVICE_URL}
+    payment-url: ${PAYMENT_SERVICE_URL}
+    cart-timeout-ms: ${ORDER_CART_TIMEOUT_MS}
+    catalog-timeout-ms: ${ORDER_CATALOG_TIMEOUT_MS}
+    inventory-timeout-ms: ${ORDER_INVENTORY_TIMEOUT_MS}
+    payment-timeout-ms: ${ORDER_PAYMENT_TIMEOUT_MS}
+  breaker:
+    failure-rate-threshold: ${ORDER_BREAKER_FAILURE_RATE_THRESHOLD}
+    sliding-window-size: ${ORDER_BREAKER_SLIDING_WINDOW_SIZE}
+    minimum-calls: ${ORDER_BREAKER_MINIMUM_CALLS}
+    wait-in-open-ms: ${ORDER_BREAKER_WAIT_OPEN_MS}
+    half-open-calls: ${ORDER_BREAKER_HALF_OPEN_CALLS}
+  outbox:
+    enabled: true
+    relay-interval-ms: ${ORDER_OUTBOX_RELAY_INTERVAL_MS}
+    batch-size: ${ORDER_OUTBOX_BATCH_SIZE}
+  reconciliation:
+    enabled: true
+    interval-ms: ${ORDER_RECONCILE_INTERVAL_MS}
+    stuck-after-ms: ${ORDER_RECONCILE_AFTER_MS}
+    abandon-after-ms: ${ORDER_ABANDON_AFTER_MS}
+    batch-size: ${ORDER_RECONCILE_BATCH_SIZE}
+  kafka:
+    consumer-enabled: true
+    order-events-topic: ${KAFKA_TOPIC_ORDER_EVENTS}
+    payment-events-topic: ${KAFKA_TOPIC_PAYMENT_EVENTS}
+    inventory-events-topic: ${KAFKA_TOPIC_INVENTORY_EVENTS}
+    payment-events-dlt: ${KAFKA_TOPIC_PAYMENT_EVENTS_ORDER_DLT}
+    inventory-events-dlt: ${KAFKA_TOPIC_INVENTORY_EVENTS_ORDER_DLT}
+    consumer-group: ${ORDER_KAFKA_CONSUMER_GROUP}
+    retry:
+      max-attempts: ${ORDER_KAFKA_RETRY_MAX_ATTEMPTS}
+      initial-interval-ms: ${ORDER_KAFKA_RETRY_INITIAL_MS}
+      multiplier: ${ORDER_KAFKA_RETRY_MULTIPLIER}
+      max-interval-ms: ${ORDER_KAFKA_RETRY_MAX_MS}
+  rabbit:
+    exchange: ${RABBITMQ_NOTIFICATION_EXCHANGE}
+    queue: ${RABBITMQ_NOTIFICATION_QUEUE}
+    dead-letter-exchange: ${RABBITMQ_NOTIFICATION_DLX}
+    dead-letter-queue: ${RABBITMQ_NOTIFICATION_DLQ}
+    confirm-timeout-ms: ${ORDER_RABBITMQ_CONFIRM_TIMEOUT_MS}
+
+logging:
+  level:
+    root: info
+    com.orderflow.order: ${LOG_LEVEL}
+    org.hibernate: warn
+    org.apache.kafka: warn
+    org.springframework.kafka: warn
+    org.springframework.amqp: warn
+    com.zaxxer.hikari: warn
+    org.flywaydb: info

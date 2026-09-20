@@ -31,9 +31,8 @@ See [architecture.md](architecture.md) for the data-ownership and messaging rule
 | Notification Worker | Node.js | — | RabbitMQ consumer | `NOTIFICATION_PORT` = 4003 |
 
 > **Progress:** Steps 0 (infrastructure), 1 (API Gateway), 2 (Catalog),
-> 3 (Cart), 4 (Inventory) and 5 (Payment) are done. Order and Notification are
-> placeholders (see each `services/<name>/README.md`) and are built in the
-> later steps listed at the bottom of this page.
+> 3 (Cart), 4 (Inventory), 5 (Payment) and 6 (Order) are done. Notification is
+> a placeholder (see `services/notification/README.md`) and is built in Step 7.
 
 ## Repository layout
 
@@ -46,7 +45,8 @@ ecommerce-microservices/
 ├── infra/
 │   ├── docker-compose.yml        # all backing infrastructure + management UIs
 │   ├── postgres/init/            # creates the three Postgres databases on first start
-│   └── kafka/create-topics.sh    # creates the Kafka topics (auto-creation is off)
+│   ├── kafka/create-topics.sh    # creates the Kafka topics (auto-creation is off)
+│   └── rabbitmq/declare-topology.sh  # notification exchange, queue, DLX, DLQ
 └── services/
     ├── api-gateway/  catalog/  cart/  order/  inventory/  payment/  notification/
 ```
@@ -197,6 +197,28 @@ job for missed webhooks, and the `payment-events` contract — all in
 reach localhost: that README covers both the signed-harness path and the
 tunnel (ngrok) path for real webhooks.
 
+## Running the Order Service (Step 6)
+
+The orchestrator. Needs everything above running (Catalog, Cart, Inventory,
+Payment on their `*_SERVICE_URL`s), PostgreSQL (`order_db`), Kafka and RabbitMQ:
+
+```bash
+bash infra/kafka/create-topics.sh          # once (adds payment-events.order.dlt, inventory-events.order.dlt)
+bash infra/rabbitmq/declare-topology.sh    # once (the service also declares it on start-up)
+
+cd services/order
+./mvnw clean package                       # target/order-service.jar, 11 unit tests
+java -jar target/order-service.jar         # http://localhost:8081  (ORDER_PORT)
+./mvnw test -Pit                           # 3 saga-safety tests against the real order_db (fake downstream clients)
+```
+
+Checkout through the gateway: add to the cart, then `POST /api/orders/` with a
+Clerk token and an `Idempotency-Key`; the response carries what the browser
+needs to open Razorpay. The synchronous/asynchronous split, the state machine,
+compensation matrix, transactional outbox, circuit breakers and the
+notification command contract are in
+[services/order/README.md](../services/order/README.md).
+
 ## Ports and management UIs
 
 Host ports come from `.env`; the values below are the defaults in `.env.example`.
@@ -287,7 +309,7 @@ Run these after `up -d`. Kafka takes the longest (~30–40 s to report healthy).
 
    ```bash
    docker exec orderflow-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
-   # (empty on a fresh volume; order-events, inventory-events, payment-events + the two .dlt topics after the script)
+   # (empty on a fresh volume; order-events, inventory-events, payment-events + four .dlt topics after the script)
    docker exec orderflow-kafka grep -E '^(advertised.listeners|auto.create.topics.enable)=' /opt/kafka/config/server.properties
    # advertised.listeners=INTERNAL://kafka:29092,EXTERNAL://localhost:9092
    # auto.create.topics.enable=false
@@ -330,7 +352,7 @@ Each step is self-contained and ends with a working, verified piece:
 3. ~~**Step 3 — Cart Service**~~ ✅ done (Redis cache-aside over MongoDB `cart_db`, live prices, circuit breaker, `/snapshot`).
 4. ~~**Step 4 — Inventory Service**~~ ✅ done (Spring Boot, `inventory_db`, pessimistic row locks, holds + expiry sweeper, Kafka topics + DLT).
 5. ~~**Step 5 — Payment Service**~~ ✅ done (Spring Boot, `payment_db`, Razorpay test mode, signed webhooks, refunds, reconciliation).
-6. **Step 6 — Order Service** (Spring Boot, `order_db`, saga choreography).
+6. ~~**Step 6 — Order Service**~~ ✅ done (Spring Boot, `order_db`, sync/async checkout, outbox, breakers, RabbitMQ commands).
 7. **Step 7 — Notification Worker** (RabbitMQ consumer, retry + dead-letter queue).
 8. **Step 8 — Wiring** (end-to-end saga, containerising the services, `depends_on` health gates).
 9. **Step 9 — Frontend** (React + Vite + Clerk storefront).

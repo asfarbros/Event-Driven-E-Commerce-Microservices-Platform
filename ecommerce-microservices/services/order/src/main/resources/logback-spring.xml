@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Structured JSON logging — one object per line, same keys as the other
+  services ({ time, level, name, requestId, msg, ... }).
+
+  SECRET REDACTION, two layers:
+   1. The code never logs credentials, webhook bodies or card/UPI identifiers
+      (see razorpay/PayloadRedactor and the logging rules in README.md).
+   2. This encoder MASKS, as a safety net, any JSON field whose name looks like
+      a secret or a payment instrument, and any value that looks like a card
+      number, in every log line — including exception messages carried in
+      structured arguments.
+-->
+<configuration>
+  <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <fieldNames>
+        <timestamp>time</timestamp>
+        <message>msg</message>
+        <logger>logger</logger>
+        <level>level</level>
+        <thread>thread</thread>
+        <levelValue>[ignore]</levelValue>
+        <version>[ignore]</version>
+      </fieldNames>
+      <timeZone>UTC</timeZone>
+      <timestampPattern>yyyy-MM-dd'T'HH:mm:ss.SSS'Z'</timestampPattern>
+      <customFields>{"name":"order"}</customFields>
+      <jsonGeneratorDecorator class="net.logstash.logback.mask.MaskingJsonGeneratorDecorator">
+        <defaultMask>[redacted]</defaultMask>
+        <!-- field-name masks (any depth) -->
+        <path>*/key_secret</path>
+        <path>*/keySecret</path>
+        <path>*/webhook_secret</path>
+        <path>*/webhookSecret</path>
+        <path>*/secret</path>
+        <path>*/password</path>
+        <path>*/authorization</path>
+        <path>*/Authorization</path>
+        <path>*/signature</path>
+        <path>*/card</path>
+        <path>*/card_id</path>
+        <path>*/vpa</path>
+        <path>*/email</path>
+        <path>*/contact</path>
+        <path>*/token_id</path>
+        <path>*/customer_id</path>
+        <!-- value masks: 13-19 digit runs (card-number shaped), Basic-auth headers -->
+        <value>\b(?:\d[ -]?){13,19}\b</value>
+        <value>Basic [A-Za-z0-9+/=]{16,}</value>
+      </jsonGeneratorDecorator>
+      <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+        <maxDepthPerThrowable>12</maxDepthPerThrowable>
+        <rootCauseFirst>true</rootCauseFirst>
+        <exclude>^sun\.reflect\..*</exclude>
+        <exclude>^java\.lang\.reflect\..*</exclude>
+        <exclude>^org\.springframework\.(aop|cglib|transaction\.interceptor)\..*</exclude>
+        <exclude>^jdk\.internal\..*</exclude>
+      </throwableConverter>
+    </encoder>
+  </appender>
+
+  <root level="INFO">
+    <appender-ref ref="JSON"/>
+  </root>
+</configuration>

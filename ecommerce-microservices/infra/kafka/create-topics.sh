@@ -21,6 +21,8 @@
 #   payment-events              Payment → Order (PaymentSucceeded / PaymentFailed / PaymentRefunded)
 #   order-events.inventory.dlt  dead letters: order-events records Inventory gave up on after retries
 #   order-events.payment.dlt    dead letters: order-events records Payment gave up on after retries
+#   payment-events.order.dlt    dead letters: payment-events records Order gave up on after retries
+#   inventory-events.order.dlt  dead letters: inventory-events records Order gave up on after retries
 # Each consumer of order-events has its OWN dead-letter topic: a record Payment
 # cannot process is not Inventory's problem, and vice versa.
 #
@@ -52,6 +54,8 @@ set -a; source "$ENV_FILE"; set +a
 : "${KAFKA_TOPIC_ORDER_EVENTS_INVENTORY_DLT:?KAFKA_TOPIC_ORDER_EVENTS_INVENTORY_DLT is required}"
 : "${KAFKA_TOPIC_PAYMENT_EVENTS:?KAFKA_TOPIC_PAYMENT_EVENTS is required}"
 : "${KAFKA_TOPIC_ORDER_EVENTS_PAYMENT_DLT:?KAFKA_TOPIC_ORDER_EVENTS_PAYMENT_DLT is required}"
+: "${KAFKA_TOPIC_PAYMENT_EVENTS_ORDER_DLT:?KAFKA_TOPIC_PAYMENT_EVENTS_ORDER_DLT is required}"
+: "${KAFKA_TOPIC_INVENTORY_EVENTS_ORDER_DLT:?KAFKA_TOPIC_INVENTORY_EVENTS_ORDER_DLT is required}"
 : "${KAFKA_INTERNAL_PORT:?KAFKA_INTERNAL_PORT is required}"
 PARTITIONS="${KAFKA_TOPIC_PARTITIONS:-3}"
 REPLICATION="${KAFKA_TOPIC_REPLICATION_FACTOR:-1}"
@@ -63,7 +67,7 @@ DLT_RETENTION_MS=$((30 * 24 * 60 * 60 * 1000))
 kt() { MSYS_NO_PATHCONV=1 docker exec "$CONTAINER" /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" "$@"; }
 
 if [[ "${1:-}" == "--list" ]]; then
-  kt --describe --topic "$KAFKA_TOPIC_ORDER_EVENTS" --topic "$KAFKA_TOPIC_INVENTORY_EVENTS" --topic "$KAFKA_TOPIC_PAYMENT_EVENTS"      --topic "$KAFKA_TOPIC_ORDER_EVENTS_INVENTORY_DLT" --topic "$KAFKA_TOPIC_ORDER_EVENTS_PAYMENT_DLT" 2>/dev/null \
+  kt --describe --topic "$KAFKA_TOPIC_ORDER_EVENTS" --topic "$KAFKA_TOPIC_INVENTORY_EVENTS" --topic "$KAFKA_TOPIC_PAYMENT_EVENTS"      --topic "$KAFKA_TOPIC_ORDER_EVENTS_INVENTORY_DLT" --topic "$KAFKA_TOPIC_ORDER_EVENTS_PAYMENT_DLT"      --topic "$KAFKA_TOPIC_PAYMENT_EVENTS_ORDER_DLT" --topic "$KAFKA_TOPIC_INVENTORY_EVENTS_ORDER_DLT" 2>/dev/null \
     || kt --list
   exit 0
 fi
@@ -79,6 +83,8 @@ create "$KAFKA_TOPIC_INVENTORY_EVENTS"
 create "$KAFKA_TOPIC_PAYMENT_EVENTS"
 create "$KAFKA_TOPIC_ORDER_EVENTS_INVENTORY_DLT" --config "retention.ms=${DLT_RETENTION_MS}"
 create "$KAFKA_TOPIC_ORDER_EVENTS_PAYMENT_DLT" --config "retention.ms=${DLT_RETENTION_MS}"
+create "$KAFKA_TOPIC_PAYMENT_EVENTS_ORDER_DLT" --config "retention.ms=${DLT_RETENTION_MS}"
+create "$KAFKA_TOPIC_INVENTORY_EVENTS_ORDER_DLT" --config "retention.ms=${DLT_RETENTION_MS}"
 
 echo ">>> [kafka-topics] done. Current topics:"
 kt --list

@@ -62,8 +62,11 @@ public class RazorpayGateway {
         PaymentProperties.Razorpay rzp = properties.razorpay();
         this.keyId = rzp.keyId();
 
+        // HTTP/1.1 on purpose: the JDK client's default HTTP/2 negotiation got a
+        // "Connection reset" from Razorpay's edge on the first call after every
+        // start-up during integration testing; HTTP/1.1 is stable.
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(
-                HttpClient.newBuilder().connectTimeout(rzp.timeout()).build());
+                HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).connectTimeout(rzp.timeout()).build());
         factory.setReadTimeout(rzp.timeout());
         this.client = RestClient.builder()
                 .baseUrl(rzp.baseUrl().replaceAll("/+$", ""))

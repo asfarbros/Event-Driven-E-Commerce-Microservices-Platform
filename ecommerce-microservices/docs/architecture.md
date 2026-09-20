@@ -93,7 +93,13 @@ Stock is held **synchronously** at checkout and settled **asynchronously**
    constraint makes a second cancellation harmless.
    Records a consumer cannot process after retries land on that consumer's own
    dead-letter topic (`order-events.inventory.dlt`, `order-events.payment.dlt`).
-5. Order enqueues a notification task for the customer.
+5. Order writes a notification COMMAND (`SendOrderConfirmation` /
+   `SendOrderCancellation`, stable `messageId`) to RabbitMQ exchange
+   `notifications` → queue `notification.tasks` (DLX `notifications.dlx` →
+   `notification.tasks.dlq`); the Step 7 worker consumes it.
+6. Order's own state changes and the messages they cause are written in one
+   transaction (`outbox_event`) and relayed afterwards — at-least-once, so every
+   consumer deduplicates on the message id.
 
 Every Kafka record is keyed by `orderId` and carries the `X-Request-Id`
 correlation header; all events of one order share a partition.

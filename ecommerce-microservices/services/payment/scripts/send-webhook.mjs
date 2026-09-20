@@ -19,6 +19,7 @@
  *   --url <url>         default http://localhost:<PAYMENT_PORT>/webhooks/razorpay
  *   --secret <s>        override the webhook secret
  *   --order-id <id>     our orderId to place in notes (optional)
+ *   --request-id <id>   X-Request-Id to send (default webhook-<eventId>-<n>) — lets one trace id flow through the webhook hop
  *   --print             print the body that was sent
  */
 import { createHmac, randomBytes } from 'node:crypto';
@@ -97,6 +98,6 @@ if (flag('print')) console.log(body);
 console.log(`POST ${url}  event=${event}  X-Razorpay-Event-Id=${eventId}  order=${rzpOrder} payment=${rzpPayment} amount=${amount}${flag('bad-signature') ? '  (BAD SIGNATURE)' : ''}`);
 for (let i = 1; i <= repeat; i++) {
   const t0 = performance.now();
-  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Razorpay-Signature': signature, 'X-Razorpay-Event-Id': eventId, 'X-Request-Id': `webhook-${eventId}-${i}` }, body });
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Razorpay-Signature': signature, 'X-Razorpay-Event-Id': eventId, 'X-Request-Id': opt('request-id', `webhook-${eventId}-${i}`) }, body });
   console.log(`  #${i}: HTTP ${res.status} ${await res.text()}  (${Math.round(performance.now() - t0)} ms)`);
 }
