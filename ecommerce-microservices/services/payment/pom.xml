@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OrderFlow — Payment Service (Step 5). Same layout, conventions and wrapper
+  as services/inventory.
+
+  Build / run:
+    ./mvnw clean package          → target/payment-service.jar (runs unit tests)
+    java -jar target/payment-service.jar   (reads ../../.env)
+    ./mvnw test                   → unit tests, no infrastructure
+    ./mvnw test -Pit              → integration tests against the real payment_db
+
+  Razorpay is called with Spring's RestClient over the JDK HttpClient, NOT the
+  official razorpay-java SDK. Reasons: (1) the SDK hardcodes its base URL and
+  timeouts, but this service needs both from env vars (RAZORPAY_API_BASE_URL,
+  RAZORPAY_TIMEOUT_MS) to wrap calls in a circuit breaker and to run against a
+  fault-injection address; (2) the four calls we make (create order, list an
+  order's payments, refund, fetch refund) are plain REST with Basic auth;
+  (3) webhook verification is a 10-line HMAC-SHA256 — no dependency needed.
+  Lombok is not used (records + explicit accessors), as in Inventory.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.5.16</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>com.orderflow</groupId>
+  <artifactId>payment-service</artifactId>
+  <version>0.1.0</version>
+  <name>OrderFlow Payment Service</name>
+  <description>Single owner of money movement; the only holder of Razorpay credentials.</description>
+
+  <properties>
+    <java.version>17</java.version>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <logstash-logback-encoder.version>9.0</logstash-logback-encoder.version>
+    <resilience4j.version>2.3.0</resilience4j.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.kafka</groupId>
+      <artifactId>spring-kafka</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <!-- Circuit breaker around every outbound Razorpay call (core library, configured from env in code). -->
+    <dependency>
+      <groupId>io.github.resilience4j</groupId>
+      <artifactId>resilience4j-circuitbreaker</artifactId>
+      <version>${resilience4j.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>net.logstash.logback</groupId>
+      <artifactId>logstash-logback-encoder</artifactId>
+      <version>${logstash-logback-encoder.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>payment-service</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <excludedGroups>integration</excludedGroups>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!-- ./mvnw test -Pit : integration tests only (real payment_db). -->
+    <profile>
+      <id>it</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+              <includes>
+                <include>**/*IT.java</include>
+              </includes>
+              <groups>integration</groups>
+              <excludedGroups combine.self="override"/>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

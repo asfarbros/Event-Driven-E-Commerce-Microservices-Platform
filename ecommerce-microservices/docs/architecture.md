@@ -71,8 +71,14 @@ Stock is held **synchronously** at checkout and settled **asynchronously**
    moves `available → reserved` under row locks and answers `201` with a
    time-limited hold (or `409 insufficient_stock` naming the short products —
    nothing held). Inventory also publishes `InventoryReserved` → `inventory-events`.
-2. Payment charges via Razorpay → `PaymentSucceeded` or `PaymentFailed` →
-   `payment-events`.
+2. Order calls Payment `POST /payments { orderId, userId, amountInPaise,
+   currency }` (HTTP, server-to-server — the browser never sets the amount).
+   Payment records the attempt, creates the Razorpay order and returns what
+   the browser needs to open the widget. The customer completes 2FA with
+   Razorpay directly (RBI: user-present, never a background step); Razorpay's
+   signed webhook tells Payment the outcome → `PaymentSucceeded` or
+   `PaymentFailed` → `payment-events`. A reconciliation job covers missed
+   webhooks.
 3. Order: on `PaymentSucceeded` → `CONFIRMED` and publishes `OrderConfirmed` →
    `order-events`; on `PaymentFailed` (or a user cancel) → `CANCELLED` and
    publishes `OrderCancelled`.
@@ -82,8 +88,11 @@ Stock is held **synchronously** at checkout and settled **asynchronously**
    settles within `INVENTORY_HOLD_DURATION_MS` is released by Inventory's expiry
    sweeper (`InventoryReleased`, reason `EXPIRED`); an `OrderConfirmed` that
    arrives after that yields `InventoryConfirmFailed` for Order to handle.
-   Records the Inventory consumer cannot process after retries land on
-   `order-events.inventory.dlt`.
+   Payment (also consuming `order-events`): `OrderCancelled` for a PAID order
+   → refund with Razorpay → `PaymentRefunded`; the refund row's UNIQUE
+   constraint makes a second cancellation harmless.
+   Records a consumer cannot process after retries land on that consumer's own
+   dead-letter topic (`order-events.inventory.dlt`, `order-events.payment.dlt`).
 5. Order enqueues a notification task for the customer.
 
 Every Kafka record is keyed by `orderId` and carries the `X-Request-Id`

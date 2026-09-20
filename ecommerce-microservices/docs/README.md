@@ -31,9 +31,9 @@ See [architecture.md](architecture.md) for the data-ownership and messaging rule
 | Notification Worker | Node.js | — | RabbitMQ consumer | `NOTIFICATION_PORT` = 4003 |
 
 > **Progress:** Steps 0 (infrastructure), 1 (API Gateway), 2 (Catalog),
-> 3 (Cart) and 4 (Inventory) are done. The other services are placeholders
-> (see each `services/<name>/README.md`) and are built in the later steps
-> listed at the bottom of this page.
+> 3 (Cart), 4 (Inventory) and 5 (Payment) are done. Order and Notification are
+> placeholders (see each `services/<name>/README.md`) and are built in the
+> later steps listed at the bottom of this page.
 
 ## Repository layout
 
@@ -171,6 +171,32 @@ in a deterministic order, all-or-nothing multi-item holds, an expiry sweeper,
 and the `inventory-events` contract Order will consume — all in
 [services/inventory/README.md](../services/inventory/README.md).
 
+## Running the Payment Service (Step 5)
+
+The only service that holds Razorpay credentials. Needs JDK 17, PostgreSQL
+(`payment_db`), Kafka with the topics created, and **Razorpay TEST-mode keys**
+(`RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` from dashboard.razorpay.com →
+Settings → API Keys) plus a `RAZORPAY_WEBHOOK_SECRET` of your choosing in `.env`
+— the placeholders are refused at start-up.
+
+```bash
+bash infra/kafka/create-topics.sh      # once (now also payment-events + order-events.payment.dlt)
+
+cd services/payment
+./mvnw clean package                   # builds target/payment-service.jar, runs 11 unit tests
+java -jar target/payment-service.jar   # http://localhost:8083  (PAYMENT_PORT) — reads ../../.env
+./mvnw test -Pit                       # 3 idempotency/concurrency tests against the real payment_db
+node scripts/send-webhook.mjs payment.captured --order <razorpayOrderId> --payment pay_TEST --amount 129900   # signed webhook, no tunnel
+```
+
+Synchronous, user-present payment creation (India/RBI 2FA), webhooks as the
+source of truth with an idempotent inbox, refunds on `OrderCancelled` that
+cannot double-refund, a circuit breaker around Razorpay, a reconciliation
+job for missed webhooks, and the `payment-events` contract — all in
+[services/payment/README.md](../services/payment/README.md). Razorpay cannot
+reach localhost: that README covers both the signed-harness path and the
+tunnel (ngrok) path for real webhooks.
+
 ## Ports and management UIs
 
 Host ports come from `.env`; the values below are the defaults in `.env.example`.
@@ -261,7 +287,7 @@ Run these after `up -d`. Kafka takes the longest (~30–40 s to report healthy).
 
    ```bash
    docker exec orderflow-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
-   # (empty on a fresh volume; order-events, inventory-events, order-events.inventory.dlt after the script)
+   # (empty on a fresh volume; order-events, inventory-events, payment-events + the two .dlt topics after the script)
    docker exec orderflow-kafka grep -E '^(advertised.listeners|auto.create.topics.enable)=' /opt/kafka/config/server.properties
    # advertised.listeners=INTERNAL://kafka:29092,EXTERNAL://localhost:9092
    # auto.create.topics.enable=false
@@ -303,7 +329,7 @@ Each step is self-contained and ends with a working, verified piece:
 2. ~~**Step 2 — Catalog Service**~~ ✅ done (MongoDB `catalog_db`, integer money, bulk price lookup, seed data).
 3. ~~**Step 3 — Cart Service**~~ ✅ done (Redis cache-aside over MongoDB `cart_db`, live prices, circuit breaker, `/snapshot`).
 4. ~~**Step 4 — Inventory Service**~~ ✅ done (Spring Boot, `inventory_db`, pessimistic row locks, holds + expiry sweeper, Kafka topics + DLT).
-5. **Step 5 — Payment Service** (Spring Boot, `payment_db`, Razorpay).
+5. ~~**Step 5 — Payment Service**~~ ✅ done (Spring Boot, `payment_db`, Razorpay test mode, signed webhooks, refunds, reconciliation).
 6. **Step 6 — Order Service** (Spring Boot, `order_db`, saga choreography).
 7. **Step 7 — Notification Worker** (RabbitMQ consumer, retry + dead-letter queue).
 8. **Step 8 — Wiring** (end-to-end saga, containerising the services, `depends_on` health gates).

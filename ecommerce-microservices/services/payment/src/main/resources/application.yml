@@ -1,0 +1,149 @@
+# =============================================================================
+# Payment Service — configuration
+# =============================================================================
+# EVERY value comes from the environment (root .env, loaded by
+# config/DotenvEnvironmentPostProcessor; a real process variable always wins).
+# No fallback defaults on purpose: a missing variable fails at start-up with a
+# clear message (config/ConfigGuard). Razorpay credentials are read here and
+# NOWHERE else in the system.
+# =============================================================================
+
+spring:
+  application:
+    name: payment
+  main:
+    banner-mode: off
+  lifecycle:
+    timeout-per-shutdown-phase: ${PAYMENT_SHUTDOWN_TIMEOUT_MS}ms
+
+  datasource:
+    # This service connects to payment_db and NOTHING else (ConfigGuard checks the URL).
+    url: ${PAYMENT_DB_URL}
+    username: ${PAYMENT_DB_USER}
+    password: ${PAYMENT_DB_PASSWORD}
+    hikari:
+      pool-name: payment-pool
+      maximum-pool-size: ${PAYMENT_DB_POOL_SIZE}
+      # Row locks (SELECT ... FOR UPDATE on a transaction row) give up after this
+      # long instead of queueing forever behind a stuck transaction.
+      connection-init-sql: SET lock_timeout = ${PAYMENT_LOCK_TIMEOUT_MS}
+      connection-timeout: 10000
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    validate-on-migrate: true
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc.time_zone: UTC
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    admin:
+      auto-create: false
+      fail-fast: false
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 15000
+        request.timeout.ms: 5000
+        max.block.ms: 5000
+    consumer:
+      group-id: ${PAYMENT_KAFKA_CONSUMER_GROUP}
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        max.poll.interval.ms: 300000
+        max.poll.records: 50
+    listener:
+      ack-mode: manual_immediate
+      immediate-stop: false
+
+  task:
+    scheduling:
+      thread-name-prefix: reconcile-
+      shutdown:
+        await-termination: true
+        await-termination-period: ${PAYMENT_SHUTDOWN_TIMEOUT_MS}ms
+
+server:
+  port: ${PAYMENT_PORT}
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-exception: false
+    include-binding-errors: never
+    whitelabel:
+      enabled: false
+  max-http-request-header-size: 16KB
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+
+# -----------------------------------------------------------------------------
+# Service-specific settings (bound to config/PaymentProperties)
+# -----------------------------------------------------------------------------
+payment:
+  db-name: ${PAYMENT_DB_NAME}
+  default-currency: ${RAZORPAY_CURRENCY}
+  max-amount-in-paise: ${PAYMENT_MAX_AMOUNT_IN_PAISE}
+  razorpay:
+    # TEST-mode keys in development (rzp_test_...). Live keys are refused unless
+    # SPRING_PROFILES_ACTIVE=prod — see ConfigGuard.
+    key-id: ${RAZORPAY_KEY_ID}
+    key-secret: ${RAZORPAY_KEY_SECRET}
+    webhook-secret: ${RAZORPAY_WEBHOOK_SECRET}
+    base-url: ${RAZORPAY_API_BASE_URL}
+    timeout-ms: ${RAZORPAY_TIMEOUT_MS}
+  breaker:
+    failure-rate-threshold: ${PAYMENT_BREAKER_FAILURE_RATE_THRESHOLD}
+    sliding-window-size: ${PAYMENT_BREAKER_SLIDING_WINDOW_SIZE}
+    minimum-calls: ${PAYMENT_BREAKER_MINIMUM_CALLS}
+    wait-in-open-ms: ${PAYMENT_BREAKER_WAIT_OPEN_MS}
+    half-open-calls: ${PAYMENT_BREAKER_HALF_OPEN_CALLS}
+  reconciliation:
+    enabled: true
+    interval-ms: ${PAYMENT_RECONCILE_INTERVAL_MS}
+    stuck-after-ms: ${PAYMENT_RECONCILE_AFTER_MS}
+    abandon-after-ms: ${PAYMENT_ABANDON_AFTER_MS}
+    batch-size: ${PAYMENT_RECONCILE_BATCH_SIZE}
+  kafka:
+    consumer-enabled: true
+    order-events-topic: ${KAFKA_TOPIC_ORDER_EVENTS}
+    payment-events-topic: ${KAFKA_TOPIC_PAYMENT_EVENTS}
+    dead-letter-topic: ${KAFKA_TOPIC_ORDER_EVENTS_PAYMENT_DLT}
+    consumer-group: ${PAYMENT_KAFKA_CONSUMER_GROUP}
+    retry:
+      max-attempts: ${PAYMENT_KAFKA_RETRY_MAX_ATTEMPTS}
+      initial-interval-ms: ${PAYMENT_KAFKA_RETRY_INITIAL_MS}
+      multiplier: ${PAYMENT_KAFKA_RETRY_MULTIPLIER}
+      max-interval-ms: ${PAYMENT_KAFKA_RETRY_MAX_MS}
+
+logging:
+  level:
+    root: info
+    com.orderflow.payment: ${LOG_LEVEL}
+    org.hibernate: warn
+    org.apache.kafka: warn
+    org.springframework.kafka: warn
+    com.zaxxer.hikari: warn
+    org.flywaydb: info
