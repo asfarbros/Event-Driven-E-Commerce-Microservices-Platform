@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Structured JSON logging — one object per line, same key names as the Node
+  services' pino output ({ time, level, name, requestId, msg, ... }) so lines
+  from every service can be read together and joined on requestId.
+
+  MDC entries (requestId, orderId, reservationId, ...) are emitted as top-level
+  fields automatically. Stack traces are included in logs (they are never sent
+  to clients — see web/ApiExceptionHandler) but trimmed to keep lines readable.
+-->
+<configuration>
+  <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <fieldNames>
+        <timestamp>time</timestamp>
+        <message>msg</message>
+        <logger>logger</logger>
+        <level>level</level>
+        <thread>thread</thread>
+        <levelValue>[ignore]</levelValue>
+        <version>[ignore]</version>
+      </fieldNames>
+      <timeZone>UTC</timeZone>
+      <timestampPattern>yyyy-MM-dd'T'HH:mm:ss.SSS'Z'</timestampPattern>
+      <customFields>{"name":"inventory"}</customFields>
+      <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+        <maxDepthPerThrowable>12</maxDepthPerThrowable>
+        <rootCauseFirst>true</rootCauseFirst>
+        <exclude>^sun\.reflect\..*</exclude>
+        <exclude>^java\.lang\.reflect\..*</exclude>
+        <exclude>^org\.springframework\.(aop|cglib|transaction\.interceptor)\..*</exclude>
+        <exclude>^jdk\.internal\..*</exclude>
+      </throwableConverter>
+    </encoder>
+  </appender>
+
+  <root level="INFO">
+    <appender-ref ref="JSON"/>
+  </root>
+</configuration>

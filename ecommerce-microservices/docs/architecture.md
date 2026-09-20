@@ -16,13 +16,15 @@ Browser (React + Clerk)
     ▼    ▼    ▼
  Catalog Cart  Order ◄──────────────────────────────┐
  (Mongo) (Redis+Mongo) (Postgres)                   │
-                        │ OrderCreated               │ PaymentSucceeded / PaymentFailed
-                        ▼  Kafka: order-events       │ Kafka: payment-events
-                     Inventory (Postgres)            │
-                        │ StockReserved / StockRejected
-                        ▼  Kafka: inventory-events   │
-                     Payment (Postgres, Razorpay) ───┘
-                        │
+              │         │  POST /reserve (sync HTTP) │ PaymentSucceeded / PaymentFailed
+              │         ▼                            │ Kafka: payment-events
+              │      Inventory (Postgres) ──► Payment (Postgres, Razorpay) ───┘
+              │         ▲      │
+              │         │      │ InventoryReserved / InventoryConfirmed /
+              │         │      │ InventoryReleased / InventoryConfirmFailed
+              │         │      ▼  Kafka: inventory-events  ──► Order
+              │  OrderConfirmed / OrderCancelled
+              └──────── Kafka: order-events (from Order)
  Order ──► RabbitMQ (notifications exchange) ──► Notification Worker
                        retry ➜ dead-letter queue
 ```
@@ -53,7 +55,7 @@ Only the gateway is public. Services never expose ports to the browser.
 | | Kafka | RabbitMQ |
 | --- | --- | --- |
 | Role | **Domain events** and **saga choreography** | **Task queue** for side-effects |
-| Topics / queues | `order-events`, `inventory-events`, `payment-events` (created explicitly; auto-create is off) | `notification.tasks` → retry → `notification.tasks.dlq` |
+| Topics / queues | `order-events`, `inventory-events`, `payment-events` + per-consumer dead-letter topics such as `order-events.inventory.dlt` (created explicitly by `infra/kafka/create-topics.sh`; auto-create is off) | `notification.tasks` → retry → `notification.tasks.dlq` |
 | Producers | Order, Inventory, Payment | Order (and later others) |
 | Consumers | Inventory, Payment, Order | Notification Worker |
 | Semantics | Append-only log, replayable, one event may have many consumers | Work item consumed once, acked, retried on failure, dead-lettered when exhausted |
@@ -62,13 +64,30 @@ Rule of thumb: *something happened* → Kafka; *please do this* → RabbitMQ.
 
 ### Saga (choreography, no orchestrator)
 
-1. Order: `OrderCreated` → `order-events`
-2. Inventory: reserve stock → `StockReserved` or `StockRejected` → `inventory-events`
-3. Payment (on `StockReserved`): charge via Razorpay → `PaymentSucceeded` or
-   `PaymentFailed` → `payment-events`
-4. Order: on `PaymentSucceeded` → `CONFIRMED`; on `StockRejected` / `PaymentFailed`
-   → `CANCELLED` (and Inventory releases stock on `PaymentFailed`).
+Stock is held **synchronously** at checkout and settled **asynchronously**
+(decided in Step 4 — see `services/inventory/README.md` for the contracts):
+
+1. Order calls Inventory `POST /reserve { orderId, items }` (HTTP). Inventory
+   moves `available → reserved` under row locks and answers `201` with a
+   time-limited hold (or `409 insufficient_stock` naming the short products —
+   nothing held). Inventory also publishes `InventoryReserved` → `inventory-events`.
+2. Payment charges via Razorpay → `PaymentSucceeded` or `PaymentFailed` →
+   `payment-events`.
+3. Order: on `PaymentSucceeded` → `CONFIRMED` and publishes `OrderConfirmed` →
+   `order-events`; on `PaymentFailed` (or a user cancel) → `CANCELLED` and
+   publishes `OrderCancelled`.
+4. Inventory (consuming `order-events`): `OrderConfirmed` → the hold becomes a
+   permanent deduction (`InventoryConfirmed`); `OrderCancelled` → the hold is
+   released (`InventoryReleased`, reason `ORDER_CANCELLED`). A hold nobody
+   settles within `INVENTORY_HOLD_DURATION_MS` is released by Inventory's expiry
+   sweeper (`InventoryReleased`, reason `EXPIRED`); an `OrderConfirmed` that
+   arrives after that yields `InventoryConfirmFailed` for Order to handle.
+   Records the Inventory consumer cannot process after retries land on
+   `order-events.inventory.dlt`.
 5. Order enqueues a notification task for the customer.
+
+Every Kafka record is keyed by `orderId` and carries the `X-Request-Id`
+correlation header; all events of one order share a partition.
 
 ## 4. Configuration
 

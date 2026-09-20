@@ -1,0 +1,161 @@
+# =============================================================================
+# Inventory Service — configuration
+# =============================================================================
+# EVERY value comes from the environment (root .env, loaded by
+# config/DotenvEnvironmentPostProcessor; a real process variable always wins).
+# There are no fallback defaults here on purpose: a missing variable must fail
+# at start-up with a clear message (config/ConfigGuard), never run with a
+# value that happens to work on one laptop.
+# =============================================================================
+
+spring:
+  application:
+    name: inventory
+  main:
+    banner-mode: off
+  lifecycle:
+    # Graceful shutdown: how long in-flight HTTP requests, the running Kafka
+    # poll and the sweeper get to finish before the JVM is forced down.
+    timeout-per-shutdown-phase: ${INVENTORY_SHUTDOWN_TIMEOUT_MS}ms
+
+  datasource:
+    # This service connects to inventory_db and NOTHING else. ConfigGuard
+    # refuses to start if the URL names any other database.
+    url: ${INVENTORY_DB_URL}
+    username: ${INVENTORY_DB_USER}
+    password: ${INVENTORY_DB_PASSWORD}
+    hikari:
+      pool-name: inventory-pool
+      maximum-pool-size: ${INVENTORY_DB_POOL_SIZE}
+      # Every pooled connection starts with a lock_timeout, so a transaction
+      # waiting on a SELECT ... FOR UPDATE row lock gives up (55P03) after this
+      # long instead of queueing forever behind a stuck transaction. The
+      # service turns that into a clean 503 stock_lock_timeout.
+      connection-init-sql: SET lock_timeout = ${INVENTORY_LOCK_TIMEOUT_MS}
+      connection-timeout: 10000
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # Fail rather than silently create the schema in an unexpected place.
+    validate-on-migrate: true
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Flyway owns the schema. Hibernate only checks the entities match it.
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc.time_zone: UTC
+        default_batch_fetch_size: 50
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    # Do not create topics from the application: auto-creation is disabled on
+    # the broker by design and infra/kafka/create-topics.sh owns them.
+    admin:
+      auto-create: false
+      fail-fast: false
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 15000
+        request.timeout.ms: 5000
+        max.block.ms: 5000
+    consumer:
+      group-id: ${INVENTORY_KAFKA_CONSUMER_GROUP}
+      # Offsets are committed by the listener container AFTER a record is
+      # processed (or dead-lettered) — never on a timer.
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        # Kafka poll is bounded so graceful shutdown never waits long for it.
+        max.poll.interval.ms: 300000
+        max.poll.records: 50
+    listener:
+      ack-mode: manual_immediate
+      # Finish the record in flight on shutdown rather than abandoning it.
+      immediate-stop: false
+
+  task:
+    scheduling:
+      thread-name-prefix: sweeper-
+      shutdown:
+        await-termination: true
+        await-termination-period: ${INVENTORY_SHUTDOWN_TIMEOUT_MS}ms
+
+server:
+  port: ${INVENTORY_PORT}
+  shutdown: graceful
+  error:
+    # Our @ControllerAdvice formats every error; Spring's default error page
+    # must never leak an exception message, path or stack trace.
+    include-message: never
+    include-stacktrace: never
+    include-exception: false
+    include-binding-errors: never
+    whitelabel:
+      enabled: false
+  max-http-request-header-size: 16KB
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+  health:
+    # Spring Boot ships no Kafka indicator; health/KafkaHealthIndicator adds one.
+    defaults:
+      enabled: true
+
+# -----------------------------------------------------------------------------
+# Service-specific settings (bound to config/InventoryProperties)
+# -----------------------------------------------------------------------------
+inventory:
+  db-name: ${INVENTORY_DB_NAME}
+  hold-duration-ms: ${INVENTORY_HOLD_DURATION_MS}
+  lock-timeout-ms: ${INVENTORY_LOCK_TIMEOUT_MS}
+  reserve-max-items: ${INVENTORY_RESERVE_MAX_ITEMS}
+  max-quantity-per-item: ${INVENTORY_MAX_QUANTITY_PER_ITEM}
+  bulk-lookup-max-ids: ${INVENTORY_BULK_LOOKUP_MAX_IDS}
+  sweeper:
+    enabled: true
+    interval-ms: ${INVENTORY_SWEEPER_INTERVAL_MS}
+    batch-size: ${INVENTORY_SWEEPER_BATCH_SIZE}
+  kafka:
+    consumer-enabled: true
+    order-events-topic: ${KAFKA_TOPIC_ORDER_EVENTS}
+    inventory-events-topic: ${KAFKA_TOPIC_INVENTORY_EVENTS}
+    dead-letter-topic: ${KAFKA_TOPIC_ORDER_EVENTS_INVENTORY_DLT}
+    consumer-group: ${INVENTORY_KAFKA_CONSUMER_GROUP}
+    retry:
+      max-attempts: ${INVENTORY_KAFKA_RETRY_MAX_ATTEMPTS}
+      initial-interval-ms: ${INVENTORY_KAFKA_RETRY_INITIAL_MS}
+      multiplier: ${INVENTORY_KAFKA_RETRY_MULTIPLIER}
+      max-interval-ms: ${INVENTORY_KAFKA_RETRY_MAX_MS}
+  seed:
+    enabled: false
+    catalog-url: ${CATALOG_SERVICE_URL:}
+
+logging:
+  level:
+    root: info
+    com.orderflow.inventory: ${LOG_LEVEL}
+    # Hibernate / Kafka clients are chatty at debug; keep them at info so the
+    # service's own lines are readable when LOG_LEVEL=debug.
+    org.hibernate: warn
+    org.apache.kafka: warn
+    org.springframework.kafka: warn
+    com.zaxxer.hikari: warn
+    org.flywaydb: info

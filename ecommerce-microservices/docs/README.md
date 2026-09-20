@@ -7,10 +7,11 @@ microservices. A React storefront talks to a single **API Gateway**, which verif
 the user's Clerk session and proxies each request to the right service. Product
 data lives in a **Catalog** service, the shopping basket in a **Cart** service
 (Redis cache in front of MongoDB), and checkout is handled as a **saga**: the
-**Order** service publishes an `OrderCreated` event to Kafka, the **Inventory**
-service reserves stock and replies with an event, the **Payment** service takes
-the money through Razorpay and replies with an event, and Order finalises or
-compensates based on what it hears. Customer-facing messages are pushed onto a
+**Order** service asks the **Inventory** service to hold stock (a synchronous
+call that can never oversell, backed by a time-limited hold), the **Payment**
+service takes the money through Razorpay and replies with an event, Order
+publishes `OrderConfirmed` / `OrderCancelled`, and Inventory settles or releases
+the hold in response (or lets it expire). Customer-facing messages are pushed onto a
 RabbitMQ queue and delivered by a **Notification** worker with retry and a
 dead-letter queue. Every service owns its own database and nothing else touches
 it — services only talk over HTTP or through events.
@@ -29,10 +30,10 @@ See [architecture.md](architecture.md) for the data-ownership and messaging rule
 | Payment | Java 17 + Spring Boot 3 | PostgreSQL `payment_db` | Kafka producer + consumer, Razorpay | `PAYMENT_PORT` = 8083 |
 | Notification Worker | Node.js | — | RabbitMQ consumer | `NOTIFICATION_PORT` = 4003 |
 
-> **Progress:** Steps 0 (infrastructure), 1 (API Gateway), 2 (Catalog) and
-> 3 (Cart) are done. The other services are placeholders (see each
-> `services/<name>/README.md`) and are built in the later steps listed at the
-> bottom of this page.
+> **Progress:** Steps 0 (infrastructure), 1 (API Gateway), 2 (Catalog),
+> 3 (Cart) and 4 (Inventory) are done. The other services are placeholders
+> (see each `services/<name>/README.md`) and are built in the later steps
+> listed at the bottom of this page.
 
 ## Repository layout
 
@@ -44,7 +45,8 @@ ecommerce-microservices/
 ├── docs/                 # this guide + architecture notes
 ├── infra/
 │   ├── docker-compose.yml        # all backing infrastructure + management UIs
-│   └── postgres/init/            # creates the three Postgres databases on first start
+│   ├── postgres/init/            # creates the three Postgres databases on first start
+│   └── kafka/create-topics.sh    # creates the Kafka topics (auto-creation is off)
 └── services/
     ├── api-gateway/  catalog/  cart/  order/  inventory/  payment/  notification/
 ```
@@ -55,8 +57,8 @@ ecommerce-microservices/
 | --- | --- | --- |
 | Docker Desktop | 4.x with Compose v2 (`docker compose`, not `docker-compose`) | WSL 2 backend on Windows. ~2 GB RAM free for the stack. |
 | Node.js | 20 LTS or 22 LTS | For the Node services (later steps). |
-| Java | 17 (Temurin / Oracle) | For the Spring Boot services (later steps). |
-| Maven | 3.9+ **or** none | Each Java service will ship a Maven wrapper (`./mvnw`), so a global Maven is optional. |
+| Java | 17 (Temurin / Oracle) | For the Spring Boot services. Point `JAVA_HOME` at it. |
+| Maven | none needed | Each Java service ships the Maven wrapper (`./mvnw` / `mvnw.cmd`), which downloads Maven 3.9.16 on first use. |
 | Git | any recent | `core.autocrlf` may be on; `.gitattributes` keeps shell scripts LF anyway. |
 
 ## Running the infrastructure
@@ -148,6 +150,27 @@ strict `GET /snapshot` for checkout — all in
 Authenticated end-to-end (`/api/cart` through the gateway) needs a Clerk
 session token; `CLERK_AUTHORIZED_PARTIES` must be empty for server-minted tokens.
 
+## Running the Inventory Service (Step 4)
+
+The first Java service. Needs JDK 17, PostgreSQL (`inventory_db`) and Kafka
+with the topics created:
+
+```bash
+bash infra/kafka/create-topics.sh      # once, from the project root: order-events, inventory-events, order-events.inventory.dlt
+
+cd services/inventory
+./mvnw clean package                   # builds target/inventory-service.jar, runs 13 unit tests
+java -jar target/inventory-service.jar # http://localhost:8082  (INVENTORY_PORT) — reads ../../.env
+scripts/seed.sh                        # one stock row per Catalog product (Catalog must be running)
+./mvnw test -Pit                       # 4 in-process concurrency tests against the real inventory_db
+node scripts/concurrency-test.mjs single --units 1 --requests 50   # live oversell proof
+```
+
+Two-number stock (`available` / `reserved`), `SELECT … FOR UPDATE` row locks
+in a deterministic order, all-or-nothing multi-item holds, an expiry sweeper,
+and the `inventory-events` contract Order will consume — all in
+[services/inventory/README.md](../services/inventory/README.md).
+
 ## Ports and management UIs
 
 Host ports come from `.env`; the values below are the defaults in `.env.example`.
@@ -233,11 +256,12 @@ Run these after `up -d`. Kafka takes the longest (~30–40 s to report healthy).
    docker exec orderflow-redis redis-cli ping                                  # PONG (uses REDISCLI_AUTH inside the container)
    ```
 
-5. **Kafka is reachable on both listeners** and has no topics yet:
+5. **Kafka is reachable on both listeners** (no topics until
+   `infra/kafka/create-topics.sh` has been run):
 
    ```bash
    docker exec orderflow-kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
-   # (empty)
+   # (empty on a fresh volume; order-events, inventory-events, order-events.inventory.dlt after the script)
    docker exec orderflow-kafka grep -E '^(advertised.listeners|auto.create.topics.enable)=' /opt/kafka/config/server.properties
    # advertised.listeners=INTERNAL://kafka:29092,EXTERNAL://localhost:9092
    # auto.create.topics.enable=false
@@ -278,7 +302,7 @@ Each step is self-contained and ends with a working, verified piece:
 1. ~~**Step 1 — API Gateway**~~ ✅ done (CORS, Clerk JWT verification, proxy routing, `X-User-Id`, correlation ids).
 2. ~~**Step 2 — Catalog Service**~~ ✅ done (MongoDB `catalog_db`, integer money, bulk price lookup, seed data).
 3. ~~**Step 3 — Cart Service**~~ ✅ done (Redis cache-aside over MongoDB `cart_db`, live prices, circuit breaker, `/snapshot`).
-4. **Step 4 — Inventory Service** (Spring Boot, `inventory_db`, Kafka topics created here).
+4. ~~**Step 4 — Inventory Service**~~ ✅ done (Spring Boot, `inventory_db`, pessimistic row locks, holds + expiry sweeper, Kafka topics + DLT).
 5. **Step 5 — Payment Service** (Spring Boot, `payment_db`, Razorpay).
 6. **Step 6 — Order Service** (Spring Boot, `order_db`, saga choreography).
 7. **Step 7 — Notification Worker** (RabbitMQ consumer, retry + dead-letter queue).

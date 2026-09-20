@@ -1,0 +1,11 @@
+# Loads the root .env into the Spring Environment (lowest precedence).
+org.springframework.boot.env.EnvironmentPostProcessor=\
+  com.orderflow.inventory.config.DotenvEnvironmentPostProcessor
+
+# Validates every required variable and refuses to start on any problem.
+org.springframework.context.ApplicationListener=\
+  com.orderflow.inventory.config.ConfigGuard
+
+# Pretty "APPLICATION FAILED TO START" output for configuration problems.
+org.springframework.boot.diagnostics.FailureAnalyzer=\
+  com.orderflow.inventory.config.InvalidConfigurationFailureAnalyzer

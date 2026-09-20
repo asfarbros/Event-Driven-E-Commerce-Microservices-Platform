@@ -1,0 +1,13 @@
+# Profile "seed" — run by scripts/seed.sh. Turns the service into a one-shot
+# command: no HTTP server, no Kafka consumer, no sweeper; seed/SeedRunner
+# creates inventory rows for Catalog's products and exits.
+spring:
+  main:
+    web-application-type: none
+inventory:
+  seed:
+    enabled: true
+  sweeper:
+    enabled: false
+  kafka:
+    consumer-enabled: false
