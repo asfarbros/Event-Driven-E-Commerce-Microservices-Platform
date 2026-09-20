@@ -5,7 +5,6 @@ import java.nio.charset.StandardCharsets;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderflow.inventory.correlation.Correlation;
-import com.orderflow.inventory.service.InventoryEvent;
 import com.orderflow.inventory.service.InventoryService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.header.Header;
@@ -30,7 +29,9 @@ import static net.logstash.logback.argument.StructuredArguments.kv;
  *
  * <ul>
  *   <li>OrderConfirmed → the hold becomes a permanent deduction (CONFIRMED).</li>
- *   <li>OrderCancelled → the hold is released back to available (RELEASED).</li>
+ *   <li>OrderCancelled → a HELD hold is released back to available (RELEASED);
+ *       a CONFIRMED hold — the order was paid and is being refunded — is
+ *       RESTOCKED (sold units come back to available).</li>
  * </ul>
  *
  * <p><b>Idempotent:</b> the service checks the reservation's status under a
@@ -79,7 +80,8 @@ public class OrderEventsListener {
                 case ORDER_CANCELLED -> {
                     log.info("consuming OrderCancelled", kv("orderId", event.orderId()), kv("eventId", event.eventId()),
                             kv("partition", record.partition()), kv("offset", record.offset()));
-                    inventoryService.releaseByOrderId(event.orderId(), InventoryEvent.ReleaseReason.ORDER_CANCELLED);
+                    // HELD -> release (unpaid order); CONFIRMED -> restock (paid order being refunded); else no-op.
+                    inventoryService.handleOrderCancelled(event.orderId());
                 }
                 default -> log.debug("ignoring order event of another type", kv("eventType", event.eventType()),
                         kv("orderId", event.orderId()), kv("offset", record.offset()));

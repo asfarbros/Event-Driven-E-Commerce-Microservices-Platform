@@ -18,6 +18,8 @@ import com.orderflow.inventory.web.ApiDtos.ReleaseRequest;
 import com.orderflow.inventory.web.ApiDtos.ReleaseResponse;
 import com.orderflow.inventory.web.ApiDtos.ReserveRequest;
 import com.orderflow.inventory.web.ApiDtos.ReserveResponse;
+import com.orderflow.inventory.web.ApiDtos.RestockRequest;
+import com.orderflow.inventory.web.ApiDtos.RestockResponse;
 import com.orderflow.inventory.web.ApiDtos.StockResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Pattern;
@@ -90,6 +92,18 @@ public class InventoryController {
                 ? service.releaseByOrderId(body.orderId(), InventoryEvent.ReleaseReason.EXPLICIT_RELEASE)
                 : service.releaseByReservationId(body.reservationId(), InventoryEvent.ReleaseReason.EXPLICIT_RELEASE);
         return ReleaseResponse.of(result);
+    }
+
+    /**
+     * Compensating action for a PAID order that was cancelled: the units of the
+     * CONFIRMED hold return to available. 409 reservation_not_restockable for
+     * HELD / RELEASED / EXPIRED and for a hold that was already restocked —
+     * stock is never changed by a rejected call.
+     * The same transition runs when OrderCancelled arrives for a CONFIRMED hold.
+     */
+    @PostMapping("/restock")
+    public RestockResponse restock(@Valid @RequestBody RestockRequest body) {
+        return RestockResponse.of(service.restockByOrderId(body.orderId(), InventoryEvent.RestockReason.EXPLICIT_RESTOCK));
     }
 
     @GetMapping("/stock/{productId}")

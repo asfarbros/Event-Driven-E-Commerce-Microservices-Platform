@@ -25,6 +25,17 @@ class InventoryTest {
     }
 
     @Test
+    void restockReturnsSoldUnitsToAvailableOnly() {
+        Inventory i = new Inventory("p1", 10);
+        i.reserve(4);
+        i.confirm(4);            // sold: available 6, reserved 0
+        i.restock(4);            // paid order cancelled: (gone) -> available
+        assertThat(i.getAvailable()).isEqualTo(10);
+        assertThat(i.getReserved()).isEqualTo(0);
+        assertThatThrownBy(() -> i.restock(0)).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     void neverGoesNegative() {
         Inventory i = new Inventory("p1", 1);
         assertThatThrownBy(() -> i.reserve(2)).isInstanceOf(IllegalStateException.class);

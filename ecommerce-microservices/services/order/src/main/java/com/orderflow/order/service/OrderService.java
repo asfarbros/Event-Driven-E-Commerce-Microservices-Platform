@@ -100,8 +100,9 @@ public class OrderService {
     /**
      * AWAITING_PAYMENT → CANCELLED: the hold is released (sync call, and the
      * OrderCancelled event as the durable backstop). CONFIRMED → CANCELLED: the
-     * OrderCancelled event makes Payment refund; Inventory's hold was already
-     * converted, so it acknowledges without restocking. Terminal → no-op.
+     * same OrderCancelled event makes Payment refund AND makes Inventory restock
+     * the CONFIRMED hold (sold units back to available; InventoryRestocked comes
+     * back and is noted in the history). Terminal → no-op.
      */
     public CancelResult cancel(String userId, UUID orderId, String reason) {
         String requestId = Correlation.current();
@@ -181,6 +182,7 @@ public class OrderService {
                     case "PaymentRefunded" -> onPaymentRefunded(o, eventId, requestId);
                     case "InventoryReleased" -> onInventoryReleased(o, eventId, requestId, detail);
                     case "InventoryConfirmFailed" -> onInventoryConfirmFailed(o, eventId, requestId);
+                    case "InventoryRestocked" -> onInventoryRestocked(o, eventId, requestId);
                     default -> Outcome.NOTED;
                 };
             } catch (OrderStatus.IllegalTransitionException e) {
@@ -268,6 +270,17 @@ public class OrderService {
         }
         o.note(Trigger.INVENTORY_EVENT, "InventoryReleased(EXPIRED) ignored (order is " + o.getStatus() + ")", eventId, requestId);
         return Outcome.IGNORED_STALE;
+    }
+
+    /**
+     * Inventory returned the sold units of a cancelled PAID order to stock (the
+     * other half of the compensation next to Payment's refund). No status
+     * change — the order is already CANCELLED — just the audit trail.
+     */
+    private Outcome onInventoryRestocked(Order o, String eventId, String requestId) {
+        o.note(Trigger.INVENTORY_EVENT, "stock restocked by Inventory (units returned to available)", eventId, requestId);
+        log.info("order stock RESTOCKED by Inventory", kv("orderId", o.getId()), kv("status", o.getStatus()), kv("paymentStatus", o.getPaymentStatus()));
+        return Outcome.APPLIED;
     }
 
     /** Payment landed after the hold expired: stock may be gone. Money must not be kept — cancel + refund. */

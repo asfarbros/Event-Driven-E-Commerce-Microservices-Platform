@@ -38,8 +38,8 @@ java -jar target/inventory-service.jar            # listens on INVENTORY_PORT (8
 scripts/seed.sh                                   # stock rows for every Catalog product (needs Catalog running)
 scripts/seed.sh --update                          # also reset existing rows to the seed quantities
 
-./mvnw test                                       # 13 unit tests, no infrastructure needed
-./mvnw test -Pit                                  # 4 in-process concurrency tests against the real inventory_db
+./mvnw test                                       # 14 unit tests, no infrastructure needed
+./mvnw test -Pit                                  # 7 in-process concurrency tests (incl. restock idempotency & restock-vs-reserve race) against the real inventory_db
 node scripts/concurrency-test.mjs single --units 1 --requests 50   # live proof against a running service
 node scripts/concurrency-test.mjs deadlock --requests 40
 node scripts/concurrency-test.mjs idempotent --requests 30
@@ -97,13 +97,15 @@ Stock is never one number. Each product row carries:
 | `available` | Units a new buyer can claim right now |
 | `reserved` | Units held by someone mid-checkout (entering an OTP) — not yet sold, not claimable |
 
-Three operations move units between them:
+Four operations move units between them:
 
 ```
                  RESERVE (sync, POST /reserve)              CONFIRM (async, OrderConfirmed)
    available  ─────────────────────────────────►  reserved  ───────────────────────────────►  (gone)
-              ◄─────────────────────────────────
-                 RELEASE (OrderCancelled, POST /release, or the expiry sweeper)
+              ◄─────────────────────────────────                                                │
+                 RELEASE (OrderCancelled, POST /release, or the expiry sweeper)                 │
+              ◄─────────────────────────────────────────────────────────────────────────────────┘
+                 RESTOCK (OrderCancelled on a CONFIRMED hold, or POST /restock)
 ```
 
 - **RESERVE** creates a time-limited **hold** (`reservation`, status `HELD`,
@@ -111,18 +113,32 @@ Three operations move units between them:
   immediately, so nobody else can claim those units while the buyer pays.
 - **CONFIRM** makes the deduction permanent: `reserved` drops, `available` is
   untouched (it already dropped at reserve time). Status `CONFIRMED`.
-- **RELEASE** is the compensating action: `reserved` → `available`. Status
-  `RELEASED` (cancellation / explicit) or `EXPIRED` (sweeper).
+- **RELEASE** is the compensating action before payment: `reserved` →
+  `available`. Status `RELEASED` (cancellation / explicit) or `EXPIRED` (sweeper).
+- **RESTOCK** is the compensating action after payment: a paid order was
+  cancelled (Payment refunds the money, this service returns the goods), so
+  the sold units come back: `available` += quantity, `reserved` untouched.
+  Status `RESTOCKED`. Only a `CONFIRMED` hold can be restocked, and only once.
 
-`HELD` is the only non-terminal state. Every other state is final — which is
-what makes confirm / release / expire idempotent (below).
+`HELD` is the only state that moves freely; `CONFIRMED` can move exactly once
+more, to `RESTOCKED`; `RELEASED`, `EXPIRED` and `RESTOCKED` are final — which is
+what makes confirm / release / expire / restock idempotent (below).
+
+```
+   HELD ──► CONFIRMED ──► RESTOCKED
+     ├────► RELEASED
+     └────► EXPIRED
+```
 
 ---
 
-## Schema (Flyway `V1__inventory_and_reservations.sql`)
+## Schema (Flyway `V1__inventory_and_reservations.sql`, `V2__reservation_restocked_status.sql`)
 
 Flyway owns the schema; Hibernate runs with `ddl-auto: validate` and only
-checks that the entities match. Never edit an applied migration — add `V2__`.
+checks that the entities match. Never edit an applied migration — add `V3__`.
+V2 adds `RESTOCKED` to the `reservation_status_valid` CHECK
+(`status IN ('HELD','CONFIRMED','RELEASED','EXPIRED','RESTOCKED')`) by dropping
+and re-adding the constraint; V1 is untouched.
 
 ```
 inventory                         reservation                          reservation_item
@@ -224,6 +240,7 @@ somehow slipped past a row lock would still fail on a stale version.
 | `POST /reserve` again with the same `orderId` | Returns the existing hold (`200`, `created: false`) — no second decrement. Three layers: (1) a lock-free pre-check; (2) the check is repeated *inside* the transaction after the row locks are held, catching a concurrent retry that raced past (1); (3) `UNIQUE (order_id)` catches anything else — the loser's transaction rolls back (its decrements vanish) and the winner's hold is returned. Verified: 30 simultaneous reserves with one `orderId` → 1 created, 29 replays, stock moved once. |
 | `OrderConfirmed` delivered twice | The hold is already `CONFIRMED`; nothing changes, no event. |
 | `OrderCancelled` / `POST /release` twice | The hold is already `RELEASED` / `EXPIRED`; nothing changes (`released: false`). |
+| `OrderCancelled` for a paid order twice / `POST /restock` twice | The status transition `CONFIRMED → RESTOCKED` is applied as a conditional `UPDATE reservation SET status='RESTOCKED' WHERE id=? AND status='CONFIRMED'` under the row lock; units are added to `available` **only if that statement changed one row**. A second delivery finds `RESTOCKED`: the event path is a no-op, the explicit endpoint answers 409. Verified: 30 concurrent restocks → 1 applied; 40 simultaneous cancel + restock calls → stock +3 exactly once. |
 | Sweeper overlapping itself or another instance | Row-level `FOR UPDATE SKIP LOCKED` + status re-check under the lock — a hold can be released exactly once. |
 
 All state transitions lock the reservation row first, so two transitions of the
@@ -239,6 +256,7 @@ The gateway strips `/api/inventory`, so paths here have no prefix.
 | --- | --- | --- |
 | `POST` | `/reserve` | `{ orderId, items: [{ productId, quantity }] }` → **201** new hold, **200** existing hold (replay), **409 `insufficient_stock`** with per-product shortages (nothing held), **503 `stock_lock_timeout`**. |
 | `POST` | `/release` | `{ orderId }` **or** `{ reservationId }` — compensating action. `released: false` if already terminal. 404 `reservation_not_found`. |
+| `POST` | `/restock` | `{ orderId }` — compensating action for a **paid** order that was cancelled: the `CONFIRMED` hold's units return to `available`, status `RESTOCKED`, `InventoryRestocked` published. **409 `reservation_not_restockable`** for `HELD` / `RELEASED` / `EXPIRED` and for a hold that was already `RESTOCKED` — a rejected call never changes stock. 404 `reservation_not_found`. (The same transition runs automatically when `OrderCancelled` arrives for a `CONFIRMED` hold; there the replay is a silent no-op.) |
 | `GET` | `/stock/{productId}` | `{ productId, available, reserved, updatedAt }`. 404 `product_not_found`. |
 | `POST` | `/stock/bulk` | `{ productIds: [...] }` → `{ stock: [...], unknown: [...], asOf }` — ONE `IN (...)` query, no N+1. |
 | `POST` | `/stock/{productId}/adjust` | Admin: `{ operation: "SET" \| "ADD", quantity }`. Creates the row for a new product. `ADD` may be negative; going below zero → 409 `invalid_adjustment`. **TODO(auth-roles)**: restrict to an admin role once the gateway propagates roles (same TODO as Catalog). |
@@ -305,7 +323,7 @@ with the record header `X-Request-Id` carrying the correlation id.
 | Event | Effect |
 | --- | --- |
 | `OrderConfirmed` | `HELD` → `CONFIRMED`; `reserved` drops permanently. Already `CONFIRMED` → no-op. `RELEASED`/`EXPIRED` (payment landed after the hold died) → **not** deducted; `InventoryConfirmFailed` is published so Order can react. |
-| `OrderCancelled` | `HELD` → `RELEASED`; units back to `available`. Already terminal → no-op. |
+| `OrderCancelled` | `HELD` (unpaid order) → `RELEASED`: `reserved` → `available`. `CONFIRMED` (paid order being refunded) → `RESTOCKED`: sold units → `available`. `RELEASED` / `EXPIRED` / `RESTOCKED` → no-op. Both branches run under the same reservation row lock, so a redelivered event sees the status the first delivery committed. |
 
 Consumer group `INVENTORY_KAFKA_CONSUMER_GROUP`; `enable.auto.commit=false`,
 `ack-mode: manual_immediate` — the offset is committed only after the service
@@ -330,7 +348,7 @@ Record **key** = `orderId`. **Headers**:
 | Header | Value |
 | --- | --- |
 | `X-Request-Id` | Correlation id of the originating request (the same value the REST response carried; `sweep-…` for the sweeper) |
-| `X-Event-Type` | `InventoryReserved` \| `InventoryConfirmed` \| `InventoryReleased` \| `InventoryConfirmFailed` |
+| `X-Event-Type` | `InventoryReserved` \| `InventoryConfirmed` \| `InventoryReleased` \| `InventoryConfirmFailed` \| `InventoryRestocked` |
 | `X-Event-Id` | UUID, unique per event — a consumer's dedupe key |
 | `X-Event-Version` | `1` |
 | `X-Source` | `inventory` |
@@ -359,6 +377,7 @@ Record **key** = `orderId`. **Headers**:
 | `InventoryConfirmed` | `OrderConfirmed` turned the hold into a permanent deduction | — |
 | `InventoryReleased` | The hold went back to `available` | `reason`: `ORDER_CANCELLED` \| `EXPLICIT_RELEASE` \| `EXPIRED` |
 | `InventoryConfirmFailed` | `OrderConfirmed` arrived for a hold that is no longer `HELD`; stock **not** deducted | `reason`: the hold's status (`EXPIRED` \| `RELEASED`) |
+| `InventoryRestocked` | a `CONFIRMED` hold's units were returned to `available` (paid order cancelled) | `reason`: `ORDER_CANCELLED` \| `EXPLICIT_RESTOCK`; `items` = the units returned |
 
 Additions bump `version`; existing fields never change meaning. Sends are
 asynchronous (`acks=all`, idempotent producer) and never block the HTTP

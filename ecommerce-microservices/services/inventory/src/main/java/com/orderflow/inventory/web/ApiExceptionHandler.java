@@ -7,6 +7,7 @@ import com.orderflow.inventory.service.ServiceExceptions.InsufficientStockExcept
 import com.orderflow.inventory.service.ServiceExceptions.InvalidAdjustmentException;
 import com.orderflow.inventory.service.ServiceExceptions.ProductNotFoundException;
 import com.orderflow.inventory.service.ServiceExceptions.ReservationNotFoundException;
+import com.orderflow.inventory.service.ServiceExceptions.ReservationNotRestockableException;
 import com.orderflow.inventory.web.ApiDtos.ApiError;
 import com.orderflow.inventory.web.ApiDtos.FieldError;
 import jakarta.validation.ConstraintViolationException;
@@ -125,6 +126,12 @@ public class ApiExceptionHandler {
         return respond(HttpStatus.CONFLICT, "insufficient_stock",
                 "Insufficient stock for " + e.getShortages().size() + " product(s) — nothing was reserved: " + names,
                 e.getShortages());
+    }
+
+    @ExceptionHandler(ReservationNotRestockableException.class)
+    public ResponseEntity<ApiError> notRestockable(ReservationNotRestockableException e) {
+        return respond(HttpStatus.CONFLICT, "reservation_not_restockable",
+                "Only a CONFIRMED hold can be restocked; this one is " + e.getStatus() + ". Nothing was changed.", null);
     }
 
     @ExceptionHandler(InvalidAdjustmentException.class)

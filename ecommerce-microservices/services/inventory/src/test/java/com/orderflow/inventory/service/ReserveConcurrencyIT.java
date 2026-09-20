@@ -139,7 +139,101 @@ class ReserveConcurrencyIT {
         assertThat(row.getReserved()).isEqualTo(2);
     }
 
+    @Test
+    void thirtyConcurrentRestocksOfOnePaidOrder_addStockOnce() throws Exception {
+        String productId = "it-restock-" + tag;
+        String orderId = "it-paid-" + tag;
+        service.adjust(productId, AdjustOperation.SET, 10);
+        service.reserve(orderId, List.of(new Line(productId, 3)));
+        service.confirm(orderId);                                   // sold: available 7, reserved 0
+        published.set(0);
+
+        List<String> results = fireRaw(30, i -> {
+            try {
+                return service.restockByOrderId(orderId, "ORDER_CANCELLED").restocked() ? "restocked" : "replayed";
+            } catch (com.orderflow.inventory.service.ServiceExceptions.ReservationNotRestockableException e) {
+                return "rejected:" + e.getStatus();
+            }
+        });
+
+        assertThat(results.stream().filter("restocked"::equals).count()).isEqualTo(1);
+        assertThat(results.stream().filter("rejected:RESTOCKED"::equals).count()).isEqualTo(29);
+        var row = inventoryRepository.findById(productId).orElseThrow();
+        assertThat(row.getAvailable()).as("exactly one restock: 7 + 3").isEqualTo(10);
+        assertThat(row.getReserved()).isZero();
+        assertThat(reservationRepository.findByOrderId(orderId).orElseThrow().getStatus()).isEqualTo(ReservationStatus.RESTOCKED);
+        assertThat(published.get()).as("InventoryRestocked published exactly once").isEqualTo(1);
+    }
+
+    @Test
+    void restockRacingWithReserves_losesNoUpdatesAndNeverDeadlocks() throws Exception {
+        String productId = "it-race-" + tag;
+        String paid = "it-race-paid-" + tag;
+        service.adjust(productId, AdjustOperation.SET, 50);
+        service.reserve(paid, List.of(new Line(productId, 5)));
+        service.confirm(paid);                                      // available 45, reserved 0
+
+        List<String> results = fireRaw(21, i -> i == 10
+                ? (service.handleOrderCancelled(paid) == InventoryService.CancelOutcome.RESTOCKED ? "restocked" : "replayed")
+                : (service.reserve("it-race-ord-" + tag + "-" + i, List.of(new Line(productId, 1))).created() ? "reserved" : "replayed"));
+
+        assertThat(results.stream().filter("restocked"::equals).count()).isEqualTo(1);
+        assertThat(results.stream().filter("reserved"::equals).count()).isEqualTo(20);
+        var row = inventoryRepository.findById(productId).orElseThrow();
+        assertThat(row.getAvailable()).as("45 + 5 restocked - 20 reserved").isEqualTo(30);
+        assertThat(row.getReserved()).isEqualTo(20);
+    }
+
+    @Test
+    void onlyAConfirmedHoldCanBeRestocked() {
+        String productId = "it-wrong-" + tag;
+        service.adjust(productId, AdjustOperation.SET, 10);
+        String held = "it-held-" + tag;
+        String released = "it-rel-" + tag;
+        service.reserve(held, List.of(new Line(productId, 1)));
+        service.reserve(released, List.of(new Line(productId, 1)));
+        service.releaseByOrderId(released, "EXPLICIT_RELEASE");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.restockByOrderId(held, "x"))
+                .isInstanceOf(com.orderflow.inventory.service.ServiceExceptions.ReservationNotRestockableException.class).hasMessageContaining("HELD");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.restockByOrderId(released, "x"))
+                .isInstanceOf(com.orderflow.inventory.service.ServiceExceptions.ReservationNotRestockableException.class).hasMessageContaining("RELEASED");
+        var row = inventoryRepository.findById(productId).orElseThrow();
+        assertThat(row.getAvailable()).isEqualTo(9);
+        assertThat(row.getReserved()).isEqualTo(1);
+    }
+
     // -------------------------------------------------------------------------
+
+    interface RawCall {
+        String run(int i);
+    }
+
+    /** Like fire(), for calls that do not return a ReserveResult. */
+    private static List<String> fireRaw(int n, RawCall call) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(n);
+        CountDownLatch go = new CountDownLatch(1);
+        List<Future<String>> futures = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            final int idx = i;
+            futures.add(pool.submit(() -> {
+                go.await();
+                try {
+                    return call.run(idx);
+                } catch (RuntimeException e) {
+                    return "error:" + e.getClass().getSimpleName() + ":" + e.getMessage();
+                }
+            }));
+        }
+        go.countDown();
+        List<String> results = new ArrayList<>();
+        for (Future<String> f : futures) {
+            results.add(f.get(60, TimeUnit.SECONDS));
+        }
+        pool.shutdownNow();
+        assertThat(results).noneMatch(r -> r.startsWith("error:"));
+        return results;
+    }
 
     record Outcome(int created, int replayed, int insufficient, List<String> otherErrors) {
     }

@@ -21,6 +21,7 @@ import com.orderflow.inventory.service.ServiceExceptions.InsufficientStockExcept
 import com.orderflow.inventory.service.ServiceExceptions.InvalidAdjustmentException;
 import com.orderflow.inventory.service.ServiceExceptions.ProductNotFoundException;
 import com.orderflow.inventory.service.ServiceExceptions.ReservationNotFoundException;
+import com.orderflow.inventory.service.ServiceExceptions.ReservationNotRestockableException;
 import com.orderflow.inventory.service.ServiceExceptions.Shortage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -253,7 +254,8 @@ public class InventoryService {
     /**
      * reserved → available. Idempotent: if the hold is already in a terminal
      * state nothing changes and {@code released} is false. A CONFIRMED hold is
-     * never released here (those units are sold; returns are a different flow).
+     * never released here: sold units come back through {@link #restockByOrderId}
+     * / {@link #handleOrderCancelled} (status RESTOCKED), not through RELEASE.
      */
     private ReleaseResult release(Supplier<Optional<Reservation>> locker, String what, String reason) {
         String correlationId = Correlation.current();
@@ -290,6 +292,131 @@ public class InventoryService {
             inventory.release(item.getQuantity());
         }
         reservation.resolve(terminal, clock.instant());
+    }
+
+    // -------------------------------------------------------------------------
+    // RESTOCK (REST /restock, Kafka: OrderCancelled on a CONFIRMED hold)
+    // -------------------------------------------------------------------------
+
+    public record RestockResult(ReservationView reservation, boolean restocked) {
+    }
+
+    /**
+     * (gone) -> available: the units of a CONFIRMED hold come back because the
+     * paid order was cancelled. Same discipline as every other writer -
+     * reservation row lock first, then inventory rows in {@link LockOrder} -
+     * plus one extra guard that lives in the database: the status transition
+     * is a conditional {@code UPDATE ... WHERE status = 'CONFIRMED'}
+     * ({@link ReservationRepository#markRestockedIfConfirmed}). Stock is added
+     * only when that statement changed exactly one row, so a duplicate
+     * OrderCancelled, a concurrent retry or a replayed event can never
+     * inflate stock: they find RESTOCKED and return {@code restocked = false}.
+     *
+     * @throws ReservationNotRestockableException for HELD / RELEASED / EXPIRED and,
+     *         on this explicit API path, for an already RESTOCKED hold - the caller
+     *         asked for something the lifecycle does not allow. (The Kafka path
+     *         treats RESTOCKED as a silent replay instead: see handleOrderCancelled.)
+     */
+    public RestockResult restockByOrderId(String orderId, String reason) {
+        String correlationId = Correlation.current();
+        RestockResult result = tx.execute(status -> {
+            Reservation reservation = reservationRepository.lockByOrderId(orderId)
+                    .orElseThrow(() -> new ReservationNotFoundException("orderId " + orderId));
+            return restockLockedInTransaction(reservation, orderId, true);
+        });
+        publishRestockOutcome(result, reason, correlationId);
+        return result;
+    }
+
+    /**
+     * Caller holds the reservation row lock. Applies the CAS, then the inventory updates.
+     * {@code strict}: an already-RESTOCKED hold is an error (explicit API) instead of a replay (Kafka).
+     */
+    private RestockResult restockLockedInTransaction(Reservation reservation, String orderId, boolean strict) {
+        ReservationView before = ReservationView.of(reservation);   // materialise the lines before the CAS clears the context
+        if (before.status() == ReservationStatus.RESTOCKED) {
+            if (strict) {
+                throw new ReservationNotRestockableException(orderId, before.status().name());
+            }
+            return new RestockResult(before, false);
+        }
+        if (before.status() != ReservationStatus.CONFIRMED) {
+            throw new ReservationNotRestockableException(orderId, before.status().name());
+        }
+        Instant now = clock.instant();
+        int changed = reservationRepository.markRestockedIfConfirmed(before.id(), now);
+        if (changed != 1) {
+            // Cannot happen while holding the row lock - but the database, not this if-statement, is the
+            // authority: no row changed, so no stock is added.
+            log.warn("restock CAS changed no row - treating as already restocked", kv("orderId", orderId), kv("reservationId", before.id()));
+            return new RestockResult(ReservationView.of(reservationRepository.findById(before.id()).orElseThrow()), false);
+        }
+        for (ReservationView.Line line : LockOrder.sorted(before.items(), ReservationView.Line::productId)) {
+            Inventory inventory = inventoryRepository.lockByProductId(line.productId())
+                    .orElseThrow(() -> new IllegalStateException("inventory row vanished for " + line.productId()));
+            inventory.restock(line.quantity());
+        }
+        ReservationView after = new ReservationView(before.id(), before.orderId(), ReservationStatus.RESTOCKED, before.expiresAt(),
+                before.createdAt(), now, before.items());
+        return new RestockResult(after, true);
+    }
+
+    private void publishRestockOutcome(RestockResult result, String reason, String correlationId) {
+        ReservationView r = result.reservation();
+        if (result.restocked()) {
+            log.info("hold RESTOCKED - sold units returned to available", kv("orderId", r.orderId()), kv("reservationId", r.id()),
+                    kv("reason", reason), kv("items", r.items()), kv("totalQuantity", r.totalQuantity()));
+            publisher.publish(InventoryEvent.restocked(r, reason, correlationId));
+        } else {
+            log.info("restock replayed - hold already RESTOCKED, nothing changed", kv("orderId", r.orderId()), kv("reservationId", r.id()));
+        }
+    }
+
+    public enum CancelOutcome { RELEASED, RESTOCKED, ALREADY_DONE }
+
+    /**
+     * OrderCancelled from Kafka - one handler for both shapes of cancellation:
+     * <ul>
+     *   <li>HELD (unpaid order) -> RELEASE: reserved -> available (the existing behaviour);</li>
+     *   <li>CONFIRMED (paid order, refund in flight at Payment) -> RESTOCK: (gone) -> available;</li>
+     *   <li>RELEASED / EXPIRED / RESTOCKED -> nothing (idempotent replay).</li>
+     * </ul>
+     * Both branches run under the same reservation row lock, so a redelivered
+     * event always sees the status the first delivery committed.
+     */
+    public CancelOutcome handleOrderCancelled(String orderId) {
+        String correlationId = Correlation.current();
+        record Outcome(CancelOutcome outcome, ReservationView view) {
+        }
+        Outcome outcome = tx.execute(status -> {
+            Reservation reservation = reservationRepository.lockByOrderId(orderId)
+                    .orElseThrow(() -> new ReservationNotFoundException("orderId " + orderId));
+            switch (reservation.getStatus()) {
+                case HELD -> {
+                    releaseHeldInTransaction(reservation, ReservationStatus.RELEASED);
+                    return new Outcome(CancelOutcome.RELEASED, ReservationView.of(reservation));
+                }
+                case CONFIRMED -> {
+                    RestockResult r = restockLockedInTransaction(reservation, orderId, false);
+                    return new Outcome(r.restocked() ? CancelOutcome.RESTOCKED : CancelOutcome.ALREADY_DONE, r.reservation());
+                }
+                default -> {
+                    return new Outcome(CancelOutcome.ALREADY_DONE, ReservationView.of(reservation));
+                }
+            }
+        });
+        ReservationView r = outcome.view();
+        switch (outcome.outcome()) {
+            case RELEASED -> {
+                log.info("hold RELEASED - units back to available", kv("orderId", r.orderId()), kv("reservationId", r.id()),
+                        kv("reason", InventoryEvent.ReleaseReason.ORDER_CANCELLED), kv("items", r.items()), kv("totalQuantity", r.totalQuantity()));
+                publisher.publish(InventoryEvent.released(r, InventoryEvent.ReleaseReason.ORDER_CANCELLED, correlationId));
+            }
+            case RESTOCKED -> publishRestockOutcome(new RestockResult(r, true), InventoryEvent.RestockReason.ORDER_CANCELLED, correlationId);
+            case ALREADY_DONE -> log.info("OrderCancelled replayed - hold already " + r.status() + ", nothing changed",
+                    kv("orderId", orderId), kv("reservationId", r.id()));
+        }
+        return outcome.outcome();
     }
 
     // -------------------------------------------------------------------------

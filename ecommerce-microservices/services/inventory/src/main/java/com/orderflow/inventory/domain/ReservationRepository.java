@@ -8,6 +8,7 @@ import java.util.UUID;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -27,6 +28,22 @@ public interface ReservationRepository extends JpaRepository<Reservation, UUID> 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select r from Reservation r where r.id = :id")
     Optional<Reservation> lockById(@Param("id") UUID id);
+
+    /**
+     * THE RESTOCK GATE — a compare-and-set the database evaluates atomically:
+     * the row becomes RESTOCKED only if it is CONFIRMED right now. Returns 1
+     * for the one caller that made the transition and 0 for everybody else
+     * (a duplicate OrderCancelled, a concurrent retry, a hold that was never
+     * confirmed). Stock is added ONLY when this returns 1, so a hold can
+     * inflate stock at most once, whatever the application logic did before.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """
+            update reservation
+            set status = 'RESTOCKED', resolved_at = :now
+            where id = :id and status = 'CONFIRMED'
+            """, nativeQuery = true)
+    int markRestockedIfConfirmed(@Param("id") UUID id, @Param("now") Instant now);
 
     /**
      * Sweeper, step 1: candidate ids (no locks, uses the partial index

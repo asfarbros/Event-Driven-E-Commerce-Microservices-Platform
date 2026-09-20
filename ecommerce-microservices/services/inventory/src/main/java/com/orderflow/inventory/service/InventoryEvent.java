@@ -37,6 +37,9 @@ import com.fasterxml.jackson.annotation.JsonInclude;
  *       {@code EXPIRED} (sweeper).</li>
  *   <li>{@code InventoryConfirmFailed} — OrderConfirmed arrived for a hold that is no longer HELD
  *       (it had expired or been released); the stock was NOT deducted. {@code reason} = the hold's status.</li>
+ *   <li>{@code InventoryRestocked}   — a CONFIRMED (sold) hold was returned to available because the paid
+ *       order was cancelled. {@code reason} = {@code ORDER_CANCELLED} (OrderCancelled consumed) |
+ *       {@code EXPLICIT_RESTOCK} (POST /restock). Same envelope, same headers; {@code items} = the units returned.</li>
  * </ul>
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -61,6 +64,7 @@ public record InventoryEvent(
         public static final String CONFIRMED = "InventoryConfirmed";
         public static final String RELEASED = "InventoryReleased";
         public static final String CONFIRM_FAILED = "InventoryConfirmFailed";
+        public static final String RESTOCKED = "InventoryRestocked";
 
         private EventType() {
         }
@@ -85,6 +89,18 @@ public record InventoryEvent(
 
     public static InventoryEvent released(ReservationView r, String reason, String correlationId) {
         return of(EventType.RELEASED, r, correlationId, reason, null);
+    }
+
+    public static final class RestockReason {
+        public static final String ORDER_CANCELLED = "ORDER_CANCELLED";
+        public static final String EXPLICIT_RESTOCK = "EXPLICIT_RESTOCK";
+
+        private RestockReason() {
+        }
+    }
+
+    public static InventoryEvent restocked(ReservationView r, String reason, String correlationId) {
+        return of(EventType.RESTOCKED, r, correlationId, reason, null);
     }
 
     public static InventoryEvent confirmFailed(ReservationView r, String correlationId) {

@@ -44,6 +44,20 @@ public final class ServiceExceptions {
         }
     }
 
+    /** POST /restock on a hold that is not CONFIRMED (HELD / RELEASED / EXPIRED). A RESTOCKED replay is not an error. */
+    public static class ReservationNotRestockableException extends RuntimeException {
+        private final String status;
+
+        public ReservationNotRestockableException(String orderId, String status) {
+            super("reservation for orderId " + orderId + " is " + status + " - only a CONFIRMED hold can be restocked");
+            this.status = status;
+        }
+
+        public String getStatus() {
+            return status;
+        }
+    }
+
     public static class ProductNotFoundException extends RuntimeException {
         private final String productId;
 

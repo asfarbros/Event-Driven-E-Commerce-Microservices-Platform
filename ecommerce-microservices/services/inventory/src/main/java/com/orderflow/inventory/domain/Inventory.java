@@ -16,6 +16,7 @@ import jakarta.persistence.Version;
  * <pre>
  *   available  --reserve-->  reserved  --confirm-->  (gone)
  *   available  <--release--  reserved
+ *   available  <--restock--  (gone)        paid order cancelled
  * </pre>
  *
  * Every mutation goes through the methods below so the invariants live in one
@@ -80,6 +81,17 @@ public class Inventory {
             throw new IllegalStateException("cannot release " + quantity + " of " + productId + " (reserved " + reserved + ")");
         }
         reserved -= quantity;
+        available += quantity;
+    }
+
+    /**
+     * RESTOCK: sold units come back. available += quantity; reserved is untouched
+     * because confirm() already removed the units from it.
+     */
+    public void restock(int quantity) {
+        if (quantity <= 0) {
+            throw new IllegalStateException("cannot restock " + quantity + " of " + productId);
+        }
         available += quantity;
     }
 

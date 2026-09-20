@@ -43,6 +43,7 @@ The user then completes 2FA directly with Razorpay. We are not involved.
  9  payment-events  PaymentFailed     → FAILED     → order-events OrderCancelled (Inventory releases the hold)
 10  inventory-events InventoryReleased(EXPIRED) on an unpaid order → CANCELLED → OrderCancelled
     inventory-events InventoryConfirmFailed (paid after the hold died)  → CANCELLED + refund
+    inventory-events InventoryRestocked (cancelled paid order's units back) → history note
     payment-events  PaymentRefunded   → paymentStatus REFUNDED
 ```
 
@@ -223,6 +224,7 @@ Observed (`ORDER_BREAKER_*`: 50 % over a window of 10, min 4 calls, 10 s open, 2
 | User never pays | hold + Razorpay order | nothing active. Inventory's sweeper expires the hold → `InventoryReleased(EXPIRED)` → CANCELLED. Payment's reconciliation fails the payment → `PaymentFailed` → FAILED. If neither event ever arrives, **`OrderReconciliationJob`** resolves it (below). | CANCELLED / FAILED |
 | Paid, but Inventory could not confirm the hold (`InventoryConfirmFailed`) | money taken, stock released | CANCELLED + `OrderCancelled` → Payment refunds | CANCELLED, REFUND_PENDING → REFUNDED |
 | Payment lands on a FAILED/CANCELLED order | money taken | `OrderCancelled` → Payment refunds | unchanged, REFUND_PENDING → REFUNDED |
+| User cancels a CONFIRMED (paid) order | money taken, stock sold | one `OrderCancelled` → Payment refunds (`refund_payment_unique`) **and** Inventory restocks the CONFIRMED hold (`CONFIRMED → RESTOCKED`, applied once). Cancelling twice refunds once and restocks once. | CANCELLED, REFUND_PENDING → REFUNDED |
 
 Invariant: an order is never left with money taken and stock released without
 a refund in flight, nor with stock held and no path to resolution.
@@ -291,7 +293,7 @@ Clerk session; that header is the only accepted identity (`web/RequireUser`).
 | `GET` | `/` | The caller's orders, newest first: `?page=1&limit=20` → `{ items[], pagination { page, limit, total, totalPages, hasNext, hasPrev } }`. |
 | `GET` | `/{orderId}` | Full detail: lines, reservation, payment, `paymentStatus`, `failureReason`, `history[]`. **Another user's order → 404** (same body as a non-existent id, so ids cannot be probed). |
 | `GET` | `/{orderId}/status` | `{ orderId, status, paymentStatus, updatedAt }` for polling. |
-| `POST` | `/{orderId}/cancel` | `{ reason? }`. AWAITING_PAYMENT → CANCELLED (hold released); CONFIRMED → CANCELLED + refund via `OrderCancelled`; terminal → `cancelled: false`; PENDING/RESERVED → `409 cancel_not_allowed`. |
+| `POST` | `/{orderId}/cancel` | `{ reason? }`. AWAITING_PAYMENT → CANCELLED (hold released); CONFIRMED → CANCELLED — the one `OrderCancelled` event makes Payment **refund** and Inventory **restock** the sold units (`InventoryRestocked` comes back and is noted in the history); terminal → `cancelled: false`; PENDING/RESERVED → `409 cancel_not_allowed`. |
 | `GET` | `/health`, `/ready` | db, kafka (5 topics), rabbitmq (queue depths), the four breakers, outbox (`pending`), reconciliation. `/ready` = db ∧ kafka ∧ rabbitmq. |
 
 All errors: `{ error, message, requestId[, details] }`; no stack traces, SQL or

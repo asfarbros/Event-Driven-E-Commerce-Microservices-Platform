@@ -25,8 +25,9 @@ import static net.logstash.logback.argument.StructuredArguments.kv;
  *
  * <p>{@code inventory-events} (Inventory's contract): {@code InventoryReleased}
  * with reason EXPIRED on an unpaid order → CANCELLED; {@code InventoryConfirmFailed}
- * (payment landed after the hold expired) → CANCELLED + refund. Other types
- * are recorded and ignored.
+ * (payment landed after the hold expired) → CANCELLED + refund;
+ * {@code InventoryRestocked} (a cancelled paid order's units returned) → history
+ * note. Other types are recorded and ignored.
  *
  * <p>Both envelopes carry {@code eventId} (the inbox key), {@code eventType},
  * {@code orderId} and the {@code X-Request-Id} header. Offsets are acked

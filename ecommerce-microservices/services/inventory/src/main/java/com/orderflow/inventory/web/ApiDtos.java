@@ -84,6 +84,22 @@ public final class ApiDtos {
         }
     }
 
+    // ---- POST /restock ------------------------------------------------------
+
+    public record RestockRequest(
+            @NotBlank(message = "is required") @Pattern(regexp = ID_PATTERN, message = ID_MESSAGE) String orderId) {
+    }
+
+    /** {@code restocked} is always true on this endpoint (a replay is a 409); kept for symmetry with /release. */
+    public record RestockResponse(UUID reservationId, String orderId, ReservationStatus status, boolean restocked,
+                                  Instant resolvedAt, List<ReservationView.Line> items, int totalQuantity) {
+
+        static RestockResponse of(InventoryService.RestockResult result) {
+            ReservationView r = result.reservation();
+            return new RestockResponse(r.id(), r.orderId(), r.status(), result.restocked(), r.resolvedAt(), r.items(), r.totalQuantity());
+        }
+    }
+
     // ---- GET /stock/{productId}, POST /stock/bulk ---------------------------
 
     public record StockResponse(String productId, int available, int reserved, Instant updatedAt) {

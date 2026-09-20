@@ -90,7 +90,10 @@ Stock is held **synchronously** at checkout and settled **asynchronously**
    arrives after that yields `InventoryConfirmFailed` for Order to handle.
    Payment (also consuming `order-events`): `OrderCancelled` for a PAID order
    → refund with Razorpay → `PaymentRefunded`; the refund row's UNIQUE
-   constraint makes a second cancellation harmless.
+   constraint makes a second cancellation harmless. Inventory, on the same
+   event, restocks a CONFIRMED hold (`CONFIRMED → RESTOCKED`, once) →
+   `InventoryRestocked` — so a cancelled paid order returns both the money
+   and the goods.
    Records a consumer cannot process after retries land on that consumer's own
    dead-letter topic (`order-events.inventory.dlt`, `order-events.payment.dlt`).
 5. Order writes a notification COMMAND (`SendOrderConfirmation` /
