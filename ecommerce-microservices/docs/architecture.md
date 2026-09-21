@@ -158,6 +158,7 @@ with everything running is ~3.0 GiB (see docs/README.md → Troubleshooting).
   ┌──────────────────────────────────────────────────────────────────────────────────────────┐
   │ Docker network orderflow-net                                                             │
   │                                                                                          │
+  │   client-ui (nginx :5173, Step 9) → the only thing the browser loads; it calls the gateway │
   │   api-gateway (Node)  Clerk JWT → X-User-Id · X-Request-Id · public: /api/catalog,       │
   │        │              /api/payment-webhooks (HMAC-verified by Payment)                    │
   │        ├─ HTTP ─► catalog (Node) ──── mongodb/catalog_db                                  │
@@ -200,6 +201,7 @@ with everything running is ~3.0 GiB (see docs/README.md → Troubleshooting).
 | inventory | same Java build | `inventory_db` | catalog (seed only) | `inventory-events` | `order-events` (group `inventory-service`) |
 | payment | same Java build | `payment_db` | Razorpay | `payment-events` | `order-events` (group `payment-service`) |
 | notification | `node:20.19-alpine` | `notification_db` | Clerk, SMTP/Mailpit | — | `notification.tasks` |
+| client-ui | `node:20.19-alpine` → `nginxinc/nginx-unprivileged:1.27.5-alpine` | — | api-gateway (from the browser), Clerk, Razorpay Checkout | — | — |
 
 Full topic/queue table, dead-letter runbooks and the outbox-vs-best-effort
 publishing difference: [messaging.md](messaging.md).

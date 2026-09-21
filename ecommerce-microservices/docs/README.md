@@ -29,11 +29,11 @@ See [architecture.md](architecture.md) for the data-ownership and messaging rule
 | Inventory | Java 17 + Spring Boot 3 | PostgreSQL `inventory_db` | Kafka producer + consumer | `INVENTORY_PORT` = 8082 |
 | Payment | Java 17 + Spring Boot 3 | PostgreSQL `payment_db` | Kafka producer + consumer, Razorpay | `PAYMENT_PORT` = 8083 |
 | Notification Worker | Node.js (headless) | MongoDB `notification_db` (dedupe ledger only) | RabbitMQ consumer (retry queues + DLQ), SMTP/Mailpit or console | `NOTIFICATION_PORT` = 4003 (health only) |
+| Storefront (`apps/client-ui`) | React 19 + Vite + Tailwind v4 + Clerk, served by nginx | — (browser talks only to the Gateway) | Gateway (HTTP), Clerk, Razorpay Checkout | `CLIENT_UI_PORT` = 5173 |
 
-> **Progress:** Steps 0–8 are done: every service is containerised, `./orderflow.sh up`
-> brings the whole system up, and the eight end-to-end scenarios in
-> [`scripts/scenarios.mjs`](../scripts/scenarios.mjs) / [`scripts/chaos.mjs`](../scripts/chaos.mjs)
-> have been run against it (results in the Step 8 report). Next: Step 9 (frontend).
+> **Progress:** all nine steps are done. `./orderflow.sh up` brings up the infrastructure,
+> the seven services, the observability stack and the storefront; `./orderflow.sh smoke`
+> proves the happy path; the storefront is documented in [`apps/client-ui/README.md`](../apps/client-ui/README.md).
 
 ## Repository layout
 
@@ -305,6 +305,7 @@ change the variable — nothing else needs to change.
 
 | UI | URL | `.env` variables | Login |
 | --- | --- | --- | --- |
+| Storefront (Step 9) — browse, cart, checkout with Razorpay test mode, live order status | <http://localhost:5173> | `CLIENT_UI_PORT` | Clerk sign-in (your test user) |
 | Grafana — dashboard *OrderFlow — Overview* (request rate, 5xx rate, p50/p95 latency per service, Kafka consumer lag, RabbitMQ queue depth, notification outcomes, circuit breakers, memory) | <http://localhost:3001> | `GRAFANA_PORT` | `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` |
 | Prometheus — 10 scrape targets (7 services, RabbitMQ ×2, itself) | <http://localhost:9090/targets> | `PROMETHEUS_PORT` | none |
 | Jaeger — distributed traces (OpenTelemetry, OTLP) | <http://localhost:16686> | `JAEGER_UI_PORT` | none |
@@ -446,6 +447,9 @@ Run these after `up -d`. Kafka takes the longest (~30–40 s to report healthy).
 | A service container is `unhealthy` after a dependency outage (e.g. Order after Kafka was stopped) | `/ready` returns 503 while a required dependency is down and the container stays running (Docker does not restart on unhealthy); it recovers by itself when the dependency returns (Kafka clients, Spring AMQP and the worker all reconnect). |
 | Sending SIGTERM to a Node process on Windows kills it instantly (no graceful shutdown) | Windows cannot deliver SIGTERM to another process. Ctrl-C (SIGINT) in its terminal works, and in containers (`docker stop`) SIGTERM works normally. |
 | Java images are ~460 MB, Node images ~320 MB | The JRE base is ~200 MB; the OpenTelemetry auto-instrumentation bundle adds ~150 MB of `node_modules` to each Node image. The app layers themselves are tiny (Java app layer 0.8 MB) and cache well. |
+| The storefront shows "We can’t reach the store right now" although the gateway is up | The page's origin is not in `CORS_ALLOWED_ORIGINS` (e.g. you opened `http://127.0.0.1:5173` or `vite preview` on 4173). Add the origin to `.env` and restart the gateway. |
+| Checkout: `Idempotency-Key` blocked by CORS | The gateway must list it in its CORS `allowedHeaders` (it does since Step 9); a browser preflight fails silently otherwise while curl works. |
+| Razorpay's payment window stays blank / never loads | Network path to Razorpay (seen on this laptop). After ~8 s the storefront shows a top-layer "Continue to your order" hatch; the order stays `AWAITING_PAYMENT` and can be paid again from the status page or cancelled. |
 | Whole stack memory | ~3.0 GiB with everything running (services 1.3 GiB, infra 1.2 GiB — Kafka alone ~540 MiB, observability 0.3 GiB, UIs 0.5 GiB). Comfortable on 16 GB; on 8 GB use `--no-observability` and stop the UI containers. |
 
 ## Build order for the next steps
@@ -460,4 +464,4 @@ Each step is self-contained and ends with a working, verified piece:
 6. ~~**Step 6 — Order Service**~~ ✅ done (Spring Boot, `order_db`, sync/async checkout, outbox, breakers, RabbitMQ commands).
 7. ~~**Step 7 — Notification Worker**~~ ✅ done (headless RabbitMQ consumer, manual acks + prefetch, tiered retry queues with backoff, DLQ with reasons + replay, MongoDB dedupe ledger, console/SMTP channels, Mailpit).
 8. ~~**Step 8 — Wiring**~~ ✅ done (7 Dockerfiles, layered Compose with health-gated start-up and init jobs, `./orderflow.sh up`/`smoke`, Prometheus + Grafana + Jaeger with connected traces across Kafka/RabbitMQ, 8 scenarios incl. chaos and cold start, Kafka DLT tooling).
-9. **Step 9 — Frontend** (React + Vite + Clerk storefront).
+9. ~~**Step 9 — Frontend**~~ ✅ done (React 19 + Vite + Tailwind v4 + Clerk storefront in `apps/client-ui`: tokens + primitives + style guide, catalogue, cart with degraded mode, Razorpay checkout with idempotency keys, polling status page with the saga timeline, nginx container in Compose).

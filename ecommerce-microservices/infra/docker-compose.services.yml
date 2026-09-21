@@ -239,6 +239,41 @@ services:
           memory: 256M
 
   # ===========================================================================
+  # Storefront (Step 9) — static SPA; the browser talks to the gateway at VITE_API_BASE_URL
+  # ===========================================================================
+  client-ui:
+    <<: *service
+    build:
+      context: ../apps/client-ui
+      args:
+        # Public configuration only; baked into the bundle at build time.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:?VITE_API_BASE_URL is required}
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:?VITE_CLERK_PUBLISHABLE_KEY is required}
+        VITE_RAZORPAY_KEY_ID: ${VITE_RAZORPAY_KEY_ID:?VITE_RAZORPAY_KEY_ID is required}
+        VITE_ORDER_POLL_INITIAL_MS: ${VITE_ORDER_POLL_INITIAL_MS:-1000}
+        VITE_ORDER_POLL_MAX_MS: ${VITE_ORDER_POLL_MAX_MS:-8000}
+        VITE_ORDER_POLL_BACKOFF_FACTOR: ${VITE_ORDER_POLL_BACKOFF_FACTOR:-2}
+        VITE_ORDER_POLL_TIMEOUT_MS: ${VITE_ORDER_POLL_TIMEOUT_MS:-120000}
+    image: orderflow/client-ui:${IMAGE_TAG:-local}
+    container_name: orderflow-client-ui
+    env_file: []
+    ports:
+      - "${CLIENT_UI_PORT:?CLIENT_UI_PORT is required}:8080"   # same port as `vite dev`, so one CORS origin covers both
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz | grep -q ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  # ===========================================================================
   # Java services
   # ===========================================================================
   order:

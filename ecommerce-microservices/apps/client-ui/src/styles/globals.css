@@ -1,0 +1,72 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+/* Base: the page ground, type defaults and the few global behaviours. */
+@layer base {
+  html {
+    background: var(--color-page);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    scrollbar-gutter: stable;
+  }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background: var(--color-page);
+  }
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  ::selection { background: var(--color-accent-soft); }
+
+  /* Visible focus, always in the accent, never removed. */
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-focus);
+    border-radius: var(--radius-sm);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@utility tabular { font-variant-numeric: tabular-nums; }
+@utility eyebrow {
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+/* Keyframes for the few motions the UI has (drawer, toast, timeline, skeleton). */
+@keyframes of-slide-in-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes of-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes of-rise-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes of-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+@keyframes of-step-pop { 0% { transform: scale(0.6); opacity: 0; } 70% { transform: scale(1.12); } 100% { transform: scale(1); opacity: 1; } }
+@keyframes of-pulse-ring { 0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-warning) 45%, transparent); } 100% { box-shadow: 0 0 0 10px transparent; } }
+
+@utility animate-slide-in-right { animation: of-slide-in-right var(--duration-slow) var(--ease-out-soft) both; }
+@utility animate-fade-in { animation: of-fade-in var(--duration-base) var(--ease-out-soft) both; }
+@utility animate-rise-in { animation: of-rise-in var(--duration-slow) var(--ease-out-soft) both; }
+@utility animate-step-pop { animation: of-step-pop 360ms var(--ease-out-soft) both; }
+@utility animate-pulse-ring { animation: of-pulse-ring 1.6s ease-out infinite; }
+@utility skeleton {
+  background: linear-gradient(90deg, var(--color-surface-2) 25%, var(--color-surface-3) 50%, var(--color-surface-2) 75%);
+  background-size: 200% 100%;
+  animation: of-shimmer 1.4s linear infinite;
+  border-radius: var(--radius-md);
+}

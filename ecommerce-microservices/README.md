@@ -16,6 +16,8 @@ cp .env.example .env        # first time only: fill in the change_me_* values, C
 ./orderflow.sh smoke        # browse → cart → checkout → signed payment webhook → CONFIRMED → stock → notification
 ```
 
+The storefront is at <http://localhost:5173> (sign in with a Clerk test user of your instance).
+
 Then open Grafana (<http://localhost:3001>), Jaeger (<http://localhost:16686>)
 and the gateway (<http://localhost:4000/health>). Infrastructure-only mode for
 host development: `docker compose --env-file .env -f infra/docker-compose.yml up -d`.

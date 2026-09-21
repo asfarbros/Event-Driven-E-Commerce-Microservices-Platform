@@ -1,0 +1,82 @@
+/*
+ * OrderFlow design tokens — THE single source of every colour, font, radius,
+ * shadow and spacing value. Components use the Tailwind utilities generated
+ * from these (`bg-surface`, `text-muted`, `rounded-md`, `shadow-elevated` …)
+ * or the CSS variables directly; never a raw hex value or one-off size.
+ *
+ * Palette: warm off-white ground, white surfaces, near-black text, a muted grey
+ * that passes WCAG AA on both grounds, and ONE accent — deep indigo — reserved
+ * for primary actions, links and focus rings. Indigo rather than green because
+ * the semantic status palette already owns green for "confirmed": the accent
+ * must never be mistaken for success, and indigo is distinct from all four
+ * status hues (green / amber / red / grey) while staying calm on the warm ground.
+ * Neutrals carry a faint warm bias so they read as chosen, not default.
+ */
+@theme {
+  /* ---- colour ------------------------------------------------------------ */
+  --color-page: #fafaf7;          /* warm off-white page background */
+  --color-surface: #ffffff;       /* cards, header, drawer */
+  --color-surface-2: #f4f3ef;     /* image wells, quiet fills, skeleton base */
+  --color-surface-3: #ecebe6;     /* skeleton highlight, hover on quiet fills */
+  --color-border: #e7e5e0;        /* thin 1px borders */
+  --color-border-strong: #cfcdc6; /* input borders, dividers that must read */
+  --color-ink: #18181b;           /* primary text */
+  --color-ink-2: #3f3f46;         /* secondary headings, table text */
+  --color-muted: #5f5e6b;         /* secondary text — 6.3:1 on white, 5.9:1 on page (AA) */
+  --color-faint: #8b8a96;         /* placeholders, decorative only (not for body copy) */
+
+  --color-accent: #3d3a8c;        /* deep indigo — buttons, links, focus */
+  --color-accent-hover: #2f2c73;
+  --color-accent-active: #26235f;
+  --color-accent-soft: #eef0fb;   /* accent tint for selected chips, soft badges */
+  --color-accent-ink: #ffffff;    /* text on accent */
+
+  /* semantic status colours — separate from the accent on purpose */
+  --color-success: #1b7f4b;
+  --color-success-soft: #e6f4ec;
+  --color-warning: #b45309;
+  --color-warning-soft: #fdf3e3;
+  --color-danger: #b42323;
+  --color-danger-soft: #fbe9e9;
+  --color-neutral: #5f5e6b;
+  --color-neutral-soft: #efefed;
+
+  /* ---- typography -------------------------------------------------------- */
+  --font-display: "Fraunces", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-sans: "Plus Jakarta Sans", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+
+  --text-xs: 0.75rem;     --text-xs--line-height: 1rem;
+  --text-sm: 0.875rem;    --text-sm--line-height: 1.25rem;
+  --text-base: 1rem;      --text-base--line-height: 1.5rem;
+  --text-lg: 1.125rem;    --text-lg--line-height: 1.625rem;
+  --text-xl: 1.25rem;     --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.5rem;     --text-2xl--line-height: 1.95rem;
+  --text-3xl: 1.875rem;   --text-3xl--line-height: 2.25rem;
+  --text-4xl: 2.375rem;   --text-4xl--line-height: 2.75rem;
+  --text-5xl: 3rem;       --text-5xl--line-height: 3.25rem;
+
+  /* ---- shape & depth ------------------------------------------------------ */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  --shadow-none: 0 0 #0000;
+  /* only genuinely elevated layers: drawer, dropdown, toast, modal */
+  --shadow-elevated: 0 1px 2px rgb(24 24 27 / 0.06), 0 12px 32px -8px rgb(24 24 27 / 0.18);
+  --shadow-popover: 0 1px 2px rgb(24 24 27 / 0.06), 0 8px 24px -6px rgb(24 24 27 / 0.16);
+  --shadow-focus: 0 0 0 3px #eef0fb, 0 0 0 5px #3d3a8c;
+
+  /* ---- spacing (8px scale; Tailwind's --spacing unit stays 4px so odd steps
+          like 12px remain available for optical adjustment) ---------------- */
+  --spacing: 0.25rem;
+  --container-content: 75rem;     /* 1200px max content width */
+  --container-prose: 42rem;       /* running text never wider than ~65ch */
+
+  /* ---- motion ------------------------------------------------------------ */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 250ms;
+}

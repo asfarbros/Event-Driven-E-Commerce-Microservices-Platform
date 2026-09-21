@@ -25,7 +25,8 @@ export function corsPolicy({ corsOrigins }) {
     origin: (origin, callback) => callback(null, isAllowed(origin)),
     credentials: true,
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'X-Request-Id'],
+    // Idempotency-Key: the storefront's checkout sends it (Step 9); without it here the browser's preflight fails.
+    allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'X-Request-Id', 'Idempotency-Key'],
     exposedHeaders: ['X-Request-Id', 'RateLimit', 'RateLimit-Policy', 'Retry-After'],
     maxAge: 600,
     optionsSuccessStatus: 204,

@@ -57,6 +57,7 @@ case "${1:-}" in
     "$0" seed
     echo
     echo "OrderFlow is up:"
+    echo "  Storefront       http://localhost:$(port CLIENT_UI_PORT)"
     echo "  API Gateway      http://localhost:$(port GATEWAY_PORT)/health"
     [[ $OBS -eq 1 ]] && {
       echo "  Grafana          http://localhost:$(port GRAFANA_PORT)   ($(port GRAFANA_ADMIN_USER) / \$GRAFANA_ADMIN_PASSWORD)"
