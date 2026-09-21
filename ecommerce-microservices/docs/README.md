@@ -28,11 +28,11 @@ See [architecture.md](architecture.md) for the data-ownership and messaging rule
 | Order | Java 17 + Spring Boot 3 | PostgreSQL `order_db` | Kafka producer + consumer, RabbitMQ producer | `ORDER_PORT` = 8081 |
 | Inventory | Java 17 + Spring Boot 3 | PostgreSQL `inventory_db` | Kafka producer + consumer | `INVENTORY_PORT` = 8082 |
 | Payment | Java 17 + Spring Boot 3 | PostgreSQL `payment_db` | Kafka producer + consumer, Razorpay | `PAYMENT_PORT` = 8083 |
-| Notification Worker | Node.js | — | RabbitMQ consumer | `NOTIFICATION_PORT` = 4003 |
+| Notification Worker | Node.js (headless) | MongoDB `notification_db` (dedupe ledger only) | RabbitMQ consumer (retry queues + DLQ), SMTP/Mailpit or console | `NOTIFICATION_PORT` = 4003 (health only) |
 
 > **Progress:** Steps 0 (infrastructure), 1 (API Gateway), 2 (Catalog),
-> 3 (Cart), 4 (Inventory), 5 (Payment) and 6 (Order) are done. Notification is
-> a placeholder (see `services/notification/README.md`) and is built in Step 7.
+> 3 (Cart), 4 (Inventory), 5 (Payment), 6 (Order) and 7 (Notification Worker)
+> are done. Next: Step 8 (wiring + containerising the services).
 
 ## Repository layout
 
@@ -244,6 +244,7 @@ change the variable — nothing else needs to change.
 | RabbitMQ Management | <http://localhost:15672> | `RABBITMQ_MANAGEMENT_PORT` | `RABBITMQ_USER` / `RABBITMQ_PASSWORD` |
 | mongo-express | <http://localhost:8091> | `MONGO_EXPRESS_PORT` | browser basic-auth prompt: `MONGO_EXPRESS_USER` / `MONGO_EXPRESS_PASSWORD` |
 | redis-commander | <http://localhost:8092> | `REDIS_COMMANDER_PORT` | login form: `REDIS_COMMANDER_USER` / `REDIS_COMMANDER_PASSWORD` |
+| Mailpit (SMTP test inbox for the Notification Worker) | <http://localhost:8093> · SMTP on 1025 | `MAILPIT_UI_PORT`, `MAILPIT_SMTP_PORT` | none |
 
 ### Application services (built in later steps — reserved now so nothing collides)
 
@@ -262,7 +263,7 @@ change the variable — nothing else needs to change.
 
 Run these after `up -d`. Kafka takes the longest (~30–40 s to report healthy).
 
-1. **Every container is healthy** — all eight rows must say `(healthy)`:
+1. **Every container is healthy** — all nine rows must say `(healthy)`:
 
    ```bash
    docker compose --env-file .env -f infra/docker-compose.yml ps
@@ -270,7 +271,7 @@ Run these after `up -d`. Kafka takes the longest (~30–40 s to report healthy).
 
    Expected containers: `orderflow-postgres`, `orderflow-mongodb`, `orderflow-redis`,
    `orderflow-kafka`, `orderflow-rabbitmq`, `orderflow-kafka-ui`,
-   `orderflow-mongo-express`, `orderflow-redis-commander`.
+   `orderflow-mongo-express`, `orderflow-redis-commander`, `orderflow-mailpit`.
 
 2. **Postgres created the three databases** (only on the first start with an empty volume):
 
@@ -353,6 +354,6 @@ Each step is self-contained and ends with a working, verified piece:
 4. ~~**Step 4 — Inventory Service**~~ ✅ done (Spring Boot, `inventory_db`, pessimistic row locks, holds + expiry sweeper, Kafka topics + DLT).
 5. ~~**Step 5 — Payment Service**~~ ✅ done (Spring Boot, `payment_db`, Razorpay test mode, signed webhooks, refunds, reconciliation).
 6. ~~**Step 6 — Order Service**~~ ✅ done (Spring Boot, `order_db`, sync/async checkout, outbox, breakers, RabbitMQ commands).
-7. **Step 7 — Notification Worker** (RabbitMQ consumer, retry + dead-letter queue).
+7. ~~**Step 7 — Notification Worker**~~ ✅ done (headless RabbitMQ consumer, manual acks + prefetch, tiered retry queues with backoff, DLQ with reasons + replay, MongoDB dedupe ledger, console/SMTP channels, Mailpit).
 8. **Step 8 — Wiring** (end-to-end saga, containerising the services, `depends_on` health gates).
 9. **Step 9 — Frontend** (React + Vite + Clerk storefront).

@@ -16,7 +16,7 @@
 # * Every stateful container has a named volume and a healthcheck, so later
 #   steps can use `depends_on: condition: service_healthy`.
 # * All containers share one bridge network and resolve each other by service
-#   name (postgres, mongodb, redis, kafka, rabbitmq). Application services are
+#   name (postgres, mongodb, redis, kafka, rabbitmq, mailpit). Application services are
 #   NOT containerised in this step; they run on the host and reach the
 #   infrastructure through the published localhost ports.
 # =============================================================================
@@ -218,6 +218,32 @@ services:
       timeout: 10s
       retries: 10
       start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Mailpit — SMTP test inbox for the Notification Worker (Step 7)
+  # ---------------------------------------------------------------------------
+  # Accepts any mail on SMTP (no auth, no TLS) and shows it in a web inbox, so
+  # NOTIFICATION_CHANNEL=smtp can be demonstrated with no real provider.
+  # Messages are kept in memory only — nothing to persist.
+  mailpit:
+    <<: *defaults
+    image: axllent/mailpit:v1.27.0
+    container_name: orderflow-mailpit
+    environment:
+      TZ: ${TZ:-UTC}
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+      MP_MAX_MESSAGES: "500"
+    ports:
+      - "${MAILPIT_SMTP_PORT:?MAILPIT_SMTP_PORT is required}:1025"
+      - "${MAILPIT_UI_PORT:?MAILPIT_UI_PORT is required}:8025"
+    healthcheck:
+      # Mailpit's own readiness probe (hits its /readyz endpoint).
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # ===========================================================================
   # Management UIs — stateless, for browsing / demo recordings

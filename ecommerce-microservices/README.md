@@ -13,5 +13,5 @@ Quick start:
 ```bash
 cp .env.example .env                                              # first time only
 docker compose --env-file .env -f infra/docker-compose.yml up -d
-docker compose --env-file .env -f infra/docker-compose.yml ps     # wait for 8 × (healthy)
+docker compose --env-file .env -f infra/docker-compose.yml ps     # wait for 9 × (healthy)
 ```

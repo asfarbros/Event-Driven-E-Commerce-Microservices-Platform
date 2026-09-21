@@ -1,0 +1,31 @@
+{
+  "name": "@orderflow/notification",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OrderFlow Notification Worker — headless RabbitMQ consumer that turns notification COMMANDS into e-mails (console / SMTP), with retry, dead-lettering and deduplication.",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "publish:command": "node scripts/publish-command.mjs",
+    "dlq": "node scripts/dlq.mjs",
+    "queues": "node scripts/queues.mjs"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "amqplib": "^2.0.1",
+    "dotenv": "^18.0.1",
+    "mongoose": "^9.10.1",
+    "nodemailer": "^10.0.10",
+    "pino": "^10.3.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "pino-pretty": "^13.1.3"
+  }
+}

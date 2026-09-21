@@ -135,7 +135,7 @@ Switching a service from host to container is a one-line change of
 - Image tags are exact (`postgres:16.9-alpine`, `mongo:7.0.16`,
   `redis:7.4.2-alpine`, `apache/kafka:3.9.1`, `rabbitmq:3.13.7-management-alpine`,
   `ghcr.io/kafbat/kafka-ui:v1.1.0`, `mongo-express:1.0.2-20`,
-  `ghcr.io/joeferner/redis-commander:0.8.1`). Never `latest`.
+  `ghcr.io/joeferner/redis-commander:0.8.1`, `axllent/mailpit:v1.27.0`). Never `latest`.
 - Named volumes (`orderflow_*`) keep data across restarts; `down -v` wipes it.
 - `.gitattributes` forces LF on shell scripts and YAML so Windows checkouts do
   not corrupt Linux-executed files.
