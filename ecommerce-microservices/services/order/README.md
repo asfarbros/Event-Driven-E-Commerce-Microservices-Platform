@@ -167,8 +167,17 @@ separately from fulfilment.
   refunds), with `payment_status = REFUND_PENDING`.
 - **Not-yet-ready events** (`PaymentSucceeded` before `AWAITING_PAYMENT` is
   committed) throw `OrderNotReadyException` → Kafka retries with backoff.
-  **Unknown orders** throw `UnknownOrderException` → retried, then parked on
-  that topic's DLT — logged, never crashed on, never invented.
+  **Unknown orders** throw `UnknownOrderException` → parked on that topic's
+  DLT *immediately* (no retry: checkout commits the `PENDING` row before any
+  downstream call, so an event for an order this service does not know is
+  foreign data — test scripts, another environment — and retrying it in place
+  only blocks the partition; Step 8 found 39 such events costing ~7 s each,
+  the "4-minute startup lag") — logged, never crashed on, never invented.
+- **Trace context across the outbox (Step 8).** `outbox_event.trace_parent`
+  stores the W3C `traceparent` of the request that queued the row; the relay
+  restores it while publishing, so the Kafka / RabbitMQ publish spans (and the
+  consumers downstream) join that request's trace instead of starting a new one.
+  No-op without the OpenTelemetry agent.
 - **Audit trail.** Every transition (and every stale/notable non-transition)
   appends to `order_status_history` in the same transaction, with the trigger,
   reason, causing `eventId` and `requestId`.

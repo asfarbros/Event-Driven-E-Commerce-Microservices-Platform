@@ -1,5 +1,7 @@
 package com.orderflow.order.domain;
 
+import com.orderflow.order.correlation.TraceContext;
+
 import java.time.Instant;
 import java.util.UUID;
 
@@ -65,6 +67,10 @@ public class OutboxEvent {
     @Column(name = "published_at")
     private Instant publishedAt;
 
+    /** W3C traceparent of the request that queued the row; restored by the relay while publishing. */
+    @Column(name = "trace_parent", length = 64)
+    private String traceParent;
+
     protected OutboxEvent() {
     }
 
@@ -80,6 +86,7 @@ public class OutboxEvent {
         this.payload = payload;
         this.correlationId = correlationId;
         this.createdAt = createdAt;
+        this.traceParent = TraceContext.current();
     }
 
     public void markPublished(Instant when) {
@@ -98,6 +105,7 @@ public class OutboxEvent {
     public String getTarget() { return target; }
     public String getRoutingKey() { return routingKey; }
     public String getEventType() { return eventType; }
+    public String getTraceParent() { return traceParent; }
     public String getMessageId() { return messageId; }
     public String getPayload() { return payload; }
     public String getCorrelationId() { return correlationId; }

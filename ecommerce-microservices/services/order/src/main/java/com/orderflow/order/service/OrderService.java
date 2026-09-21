@@ -154,7 +154,8 @@ public class OrderService {
      * Applies one event inside one transaction:
      * <ol>
      *   <li>processed_event lookup → DUPLICATE (nothing happens, ack).</li>
-     *   <li>row lock on the order → unknown → {@link UnknownOrderException} (retry, then DLT).</li>
+     *   <li>row lock on the order → unknown → {@link UnknownOrderException} (not retried: DLT immediately —
+     *       the PENDING row is committed before any downstream call, so it can only be foreign data).</li>
      *   <li>the transition per event type (below); an illegal transition means
      *       the event is STALE for the order's current state → recorded and ignored,
      *       never applied over a terminal state.</li>

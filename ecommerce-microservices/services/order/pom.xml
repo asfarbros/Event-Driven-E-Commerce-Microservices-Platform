@@ -76,6 +76,18 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
+    <dependency>
+      <!-- /actuator/prometheus for the Step 8 observability stack -->
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+    <dependency>
+      <!-- W3C trace context captured into the outbox row and restored by the relay, so the
+           Kafka / RabbitMQ publish spans join the trace of the request that queued them.
+           The SDK is provided by the OpenTelemetry Java agent at runtime (no agent = no-op). -->
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-api</artifactId>
+    </dependency>
     <!-- One circuit breaker per downstream service (core library, configured from env in code). -->
     <dependency>
       <groupId>io.github.resilience4j</groupId>

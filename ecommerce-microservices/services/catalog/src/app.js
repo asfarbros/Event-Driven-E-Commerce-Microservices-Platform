@@ -13,6 +13,7 @@ import { requestContext } from './middleware/request-context.js';
 import { requestLogging } from './middleware/logging.js';
 import { notFound, errorHandler } from './middleware/error-handler.js';
 import { healthRouter } from './routes/health.js';
+import { createMetrics } from './lib/metrics.js';
 import { productsRouter } from './routes/products.js';
 
 export function createApp(config, logger, { version = '0.0.0' } = {}) {
@@ -26,10 +27,13 @@ export function createApp(config, logger, { version = '0.0.0' } = {}) {
 
   app.use(requestContext());
   app.use(requestLogging(logger));
+  const metrics = createMetrics({ service: 'catalog' });
+  app.use(metrics.middleware());
   app.use(helmet());
   app.use(express.json({ limit: config.bodyLimitBytes }));
 
   app.use(healthRouter({ version, dbName: config.mongo.dbName }));
+  app.get('/metrics', metrics.handler);   // Prometheus scrape (internal — the Compose network)
   app.use(productsRouter(config));
 
   app.use(notFound());

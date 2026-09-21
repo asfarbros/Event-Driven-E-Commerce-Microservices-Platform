@@ -9,6 +9,7 @@ import { requestContext } from './middleware/request-context.js';
 import { requestLogging } from './middleware/logging.js';
 import { notFound, errorHandler } from './middleware/error-handler.js';
 import { healthRouter } from './routes/health.js';
+import { createMetrics } from './lib/metrics.js';
 import { cartRouter } from './routes/cart.js';
 import { createCartService } from './services/cart.js';
 
@@ -20,10 +21,13 @@ export function createApp(config, logger, { version = '0.0.0', cache, catalog })
 
   app.use(requestContext());
   app.use(requestLogging(logger));
+  const metrics = createMetrics({ service: 'cart' });
+  app.use(metrics.middleware());
   app.use(helmet());
   app.use(express.json({ limit: config.bodyLimitBytes }));
 
   app.use(healthRouter({ version, dbName: config.mongo.dbName, cache, catalog }));
+  app.get('/metrics', metrics.handler);   // Prometheus scrape (internal — the Compose network)
   app.use(cartRouter(config, createCartService({ cache, catalog, limits: config.limits })));
 
   app.use(notFound());

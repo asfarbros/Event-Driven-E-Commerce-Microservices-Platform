@@ -44,6 +44,7 @@ Defined once in [`src/config/routes.js`](src/config/routes.js). Everything else
 | `/api/cart`      | cart      | `CART_SERVICE_URL`      | yes  | strip-prefix   | `/api/cart/items` → `/items`                 |
 | `/api/orders`    | orders    | `ORDER_SERVICE_URL`     | yes  | strip-prefix   | `/api/orders/42` → `/42`                     |
 | `/api/payments`  | payments  | `PAYMENT_SERVICE_URL`   | yes  | strip-prefix   | `/api/payments/verify` → `/verify`           |
+| `/api/payment-webhooks` | payment-webhooks | `PAYMENT_SERVICE_URL` | **no** — Razorpay sends no JWT; Payment verifies the HMAC signature over the raw body | custom | `/api/payment-webhooks/razorpay` → `/webhooks/razorpay` |
 | `/api/inventory` | inventory | `INVENTORY_SERVICE_URL` | yes  | strip-prefix   | `/api/inventory/stock/7` → `/stock/7`        |
 
 Rules that apply to every entry:

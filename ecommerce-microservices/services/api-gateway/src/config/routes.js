@@ -26,6 +26,15 @@ export const routes = [
   // ---- Public: browsing the catalogue must work logged-out ----
   { name: 'catalog',   prefix: '/api/catalog',   targetEnv: 'CATALOG_SERVICE_URL',   auth: false, rewrite: 'strip-prefix' },
 
+  // ---- Public: payment-provider webhooks. Razorpay calls this with NO Clerk
+  // token; it is authenticated by the HMAC signature the Payment Service
+  // verifies over the raw body (RAZORPAY_WEBHOOK_SECRET). The prefix is a
+  // sibling of /api/payments (nesting is forbidden below), and the body is
+  // streamed through untouched so the signature still matches.
+  //   POST /api/payment-webhooks/razorpay  →  Payment POST /webhooks/razorpay
+  { name: 'payment-webhooks', prefix: '/api/payment-webhooks', targetEnv: 'PAYMENT_SERVICE_URL', auth: false,
+    rewrite: (path) => path.replace(/^\/api\/payment-webhooks/, '/webhooks') },
+
   // ---- Protected: valid Clerk JWT required ----
   { name: 'cart',      prefix: '/api/cart',      targetEnv: 'CART_SERVICE_URL',      auth: true,  rewrite: 'strip-prefix' },
   { name: 'orders',    prefix: '/api/orders',    targetEnv: 'ORDER_SERVICE_URL',     auth: true,  rewrite: 'strip-prefix' },

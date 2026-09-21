@@ -133,7 +133,7 @@ export function createWorker({ config, logger, processor, metrics, instance }) {
     }));
     metrics.inc('retried');
     ctx.log.warn(
-      { attempt, maxAttempts: retry.maxAttempts, nextAttempt: attempt + 1, retryInMs: delayMs, retryQueue: queue, err: describeError(err) },
+      { attempt, maxAttempts: retry.maxAttempts, nextAttempt: attempt + 1, retryInMs: delayMs, retryQueue: queue, error: describeError(err) },
       `delivery failed — retry ${attempt} of ${retry.maxRetries} scheduled in ${delayMs} ms`,
     );
   }

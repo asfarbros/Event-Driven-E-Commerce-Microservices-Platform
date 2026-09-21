@@ -77,6 +77,11 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
+    <dependency>
+      <!-- /actuator/prometheus for the Step 8 observability stack -->
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
     <!-- Circuit breaker around every outbound Razorpay call (core library, configured from env in code). -->
     <dependency>
       <groupId>io.github.resilience4j</groupId>

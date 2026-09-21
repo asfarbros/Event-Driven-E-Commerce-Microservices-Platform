@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import com.orderflow.order.config.OrderProperties;
 import com.orderflow.order.correlation.Correlation;
+import com.orderflow.order.correlation.TraceContext;
 import com.orderflow.order.domain.OutboxEvent;
 import com.orderflow.order.domain.OrderRepository;
 import com.orderflow.order.domain.OutboxRepository;
@@ -183,7 +184,8 @@ public class OutboxRelay {
             }
             OutboxEvent row = locked.get();
             String correlationId = row.getCorrelationId() != null ? row.getCorrelationId() : Correlation.current();
-            try {
+            try (io.opentelemetry.context.Scope trace = TraceContext.restore(row.getTraceParent())) {
+                // The publish span (created by the OpenTelemetry agent) becomes a child of the request that queued the row.
                 switch (row.getDestination()) {
                     case KAFKA -> publishKafka(row, correlationId);
                     case RABBITMQ -> publishRabbit(row, correlationId);

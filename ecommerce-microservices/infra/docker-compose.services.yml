@@ -1,0 +1,328 @@
+# =============================================================================
+# OrderFlow — application services as containers (Step 8)
+# =============================================================================
+# LAYERED on top of infra/docker-compose.yml (which stays usable on its own for
+# host-mode development, exactly as in Steps 1–7). Run from the PROJECT ROOT:
+#
+#   docker compose --env-file .env -f infra/docker-compose.yml -f infra/docker-compose.services.yml up -d --build
+#   …or simply:  ./orderflow.sh up        (adds the observability file too)
+#
+# HOST vs CONTAINER addresses. Every service reads the SAME root .env
+# (env_file). In .env the addresses are the host-published ones
+# (localhost:5432, localhost:9092, http://localhost:4001 …) so services still
+# run on the host with `npm start` / `java -jar`. Inside the Docker network the
+# same things live at their SERVICE NAMES and INTERNAL ports, so each container
+# gets a small `environment:` override that rebuilds only the address-bearing
+# variables from the .env pieces (user, password, db name) — credentials are
+# never repeated here. Kafka is the reason the Step 0 broker has two
+# listeners: kafka:29092 (containers) and localhost:9092 (host).
+#
+# STARTUP ORDER. Every container waits for what it needs with
+# `depends_on: condition: service_healthy`, and for the messaging setup jobs
+# (kafka-init / rabbitmq-init, `service_completed_successfully`), which run
+# the SAME idempotent scripts a developer runs on the host.
+#
+# EXPOSURE. Only the API Gateway publishes a host port. Everything else is
+# reachable on the Docker network only. To reach an internal service from the
+# host temporarily, add the override file:
+#   -f infra/docker-compose.debug-ports.yml
+#
+# RESOURCES. `deploy.resources.limits` caps memory so the whole stack fits a
+# student laptop (see docs/README.md for the measured footprint); the JVMs size
+# their heap from the cap (-XX:MaxRAMPercentage in the Dockerfile).
+# =============================================================================
+
+x-service: &service
+  restart: unless-stopped
+  networks:
+    - orderflow
+  env_file:
+    - ../.env
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+# Tracing (OpenTelemetry → Jaeger via OTLP/HTTP). Harmless when Jaeger is not
+# running: exporters log a warning and drop spans. Set OTEL_SDK_DISABLED=true
+# in the shell (orderflow.sh --no-observability does) to switch it off.
+x-otel: &otel
+  OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_METRICS_EXPORTER: none
+  OTEL_LOGS_EXPORTER: none
+  OTEL_PROPAGATORS: tracecontext,baggage
+  OTEL_TRACES_SAMPLER: always_on
+  OTEL_NODE_RESOURCE_DETECTORS: env,host,os
+  # Java agent (ignored by Node): -javaagent + the instrumentation-specific switches.
+  # Kafka/RabbitMQ consumer spans become CHILDREN of the producer span (one
+  # connected trace) rather than separate traces with links.
+  OTEL_INSTRUMENTATION_MESSAGING_EXPERIMENTAL_RECEIVE_TELEMETRY_ENABLED: "false"
+  OTEL_INSTRUMENTATION_LOGBACK_MDC_ADD_BAGGAGE: "true"
+
+x-java: &java
+  JAVA_TOOL_OPTIONS: "-javaagent:/app/otel-javaagent.jar -Xss512k -XX:TieredStopAtLevel=1"
+  KAFKA_BOOTSTRAP_SERVERS: kafka:${KAFKA_INTERNAL_PORT:?}
+  CATALOG_SERVICE_URL: http://catalog:${CATALOG_PORT:?}
+  CART_SERVICE_URL: http://cart:${CART_PORT:?}
+  ORDER_SERVICE_URL: http://order:${ORDER_PORT:?}
+  INVENTORY_SERVICE_URL: http://inventory:${INVENTORY_PORT:?}
+  PAYMENT_SERVICE_URL: http://payment:${PAYMENT_PORT:?}
+
+services:
+  # ===========================================================================
+  # One-shot setup jobs — the declarative messaging topology
+  # ===========================================================================
+  kafka-init:
+    image: apache/kafka:3.9.1
+    container_name: orderflow-kafka-init
+    networks: [orderflow]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    env_file:
+      - ../.env
+    environment:
+      KAFKA_BIN: /opt/kafka/bin
+      KAFKA_BOOTSTRAP: kafka:${KAFKA_INTERNAL_PORT:?}
+      KAFKA_HEAP_OPTS: -Xmx128m
+    volumes:
+      - ./kafka/create-topics.sh:/scripts/create-topics.sh:ro
+    entrypoint: ["/bin/bash", "/scripts/create-topics.sh"]
+    restart: "no"
+
+  rabbitmq-init:
+    image: curlimages/curl:8.14.1
+    container_name: orderflow-rabbitmq-init
+    networks: [orderflow]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    env_file:
+      - ../.env
+    environment:
+      RABBITMQ_API: http://rabbitmq:15672/api
+    volumes:
+      - ./rabbitmq/declare-topology.sh:/scripts/declare-topology.sh:ro
+    entrypoint: ["/bin/sh", "/scripts/declare-topology.sh"]
+    restart: "no"
+
+  # ===========================================================================
+  # Node services
+  # ===========================================================================
+  api-gateway:
+    <<: *service
+    build: ../services/api-gateway
+    image: orderflow/api-gateway:${IMAGE_TAG:-local}
+    container_name: orderflow-api-gateway
+    environment:
+      <<: *otel
+      OTEL_SERVICE_NAME: api-gateway
+      CATALOG_SERVICE_URL: http://catalog:${CATALOG_PORT:?}
+      CART_SERVICE_URL: http://cart:${CART_PORT:?}
+      ORDER_SERVICE_URL: http://order:${ORDER_PORT:?}
+      INVENTORY_SERVICE_URL: http://inventory:${INVENTORY_PORT:?}
+      PAYMENT_SERVICE_URL: http://payment:${PAYMENT_PORT:?}
+      # Docker's bridge puts the client behind one hop; trust it so rate limiting and logs see the real client IP.
+      GATEWAY_TRUST_PROXY: "1"
+    ports:
+      - "${GATEWAY_PORT:?}:${GATEWAY_PORT:?}"      # the ONLY host-published application port
+    depends_on:
+      catalog:
+        condition: service_healthy
+      cart:
+        condition: service_healthy
+      order:
+        condition: service_healthy
+      payment:
+        condition: service_healthy
+      inventory:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${GATEWAY_PORT:?}/health | grep -q '\"status\":\"ok\"'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  catalog:
+    <<: *service
+    build: ../services/catalog
+    image: orderflow/catalog:${IMAGE_TAG:-local}
+    container_name: orderflow-catalog
+    environment:
+      <<: *otel
+      OTEL_SERVICE_NAME: catalog
+      CATALOG_MONGO_URI: mongodb://${MONGO_ROOT_USER:?}:${MONGO_ROOT_PASSWORD:?}@mongodb:27017/${CATALOG_DB_NAME:?}?authSource=admin
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${CATALOG_PORT:?}/ready > /dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  cart:
+    <<: *service
+    build: ../services/cart
+    image: orderflow/cart:${IMAGE_TAG:-local}
+    container_name: orderflow-cart
+    environment:
+      <<: *otel
+      OTEL_SERVICE_NAME: cart
+      CART_MONGO_URI: mongodb://${MONGO_ROOT_USER:?}:${MONGO_ROOT_PASSWORD:?}@mongodb:27017/${CART_DB_NAME:?}?authSource=admin
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CATALOG_SERVICE_URL: http://catalog:${CATALOG_PORT:?}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      catalog:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${CART_PORT:?}/ready > /dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  notification:
+    <<: *service
+    build: ../services/notification
+    image: orderflow/notification:${IMAGE_TAG:-local}
+    container_name: orderflow-notification
+    environment:
+      <<: *otel
+      OTEL_SERVICE_NAME: notification
+      NOTIFICATION_INSTANCE_ID: notification-1
+      NOTIFICATION_MONGO_URI: mongodb://${MONGO_ROOT_USER:?}:${MONGO_ROOT_PASSWORD:?}@mongodb:27017/${NOTIFICATION_DB_NAME:?}?authSource=admin
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      rabbitmq-init:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${NOTIFICATION_PORT:?}/ready > /dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ===========================================================================
+  # Java services
+  # ===========================================================================
+  order:
+    <<: *service
+    build: ../services/order
+    image: orderflow/order:${IMAGE_TAG:-local}
+    container_name: orderflow-order
+    environment:
+      <<: [*otel, *java]
+      OTEL_SERVICE_NAME: order
+      ORDER_DB_URL: jdbc:postgresql://postgres:5432/${ORDER_DB_NAME:?}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:?}:${RABBITMQ_PASSWORD:?}@rabbitmq:5672
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      rabbitmq-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${ORDER_PORT:?}/ready > /dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 640M
+
+  inventory:
+    <<: *service
+    build: ../services/inventory
+    image: orderflow/inventory:${IMAGE_TAG:-local}
+    container_name: orderflow-inventory
+    environment:
+      <<: [*otel, *java]
+      OTEL_SERVICE_NAME: inventory
+      INVENTORY_DB_URL: jdbc:postgresql://postgres:5432/${INVENTORY_DB_NAME:?}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${INVENTORY_PORT:?}/ready > /dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  payment:
+    <<: *service
+    build: ../services/payment
+    image: orderflow/payment:${IMAGE_TAG:-local}
+    container_name: orderflow-payment
+    environment:
+      <<: [*otel, *java]
+      OTEL_SERVICE_NAME: payment
+      PAYMENT_DB_URL: jdbc:postgresql://postgres:5432/${PAYMENT_DB_NAME:?}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${PAYMENT_PORT:?}/ready > /dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M

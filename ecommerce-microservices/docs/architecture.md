@@ -29,7 +29,8 @@ Browser (React + Clerk)
                        retry ➜ dead-letter queue
 ```
 
-Only the gateway is public. Services never expose ports to the browser.
+Only the gateway is public. Services never expose ports to the browser (in
+Compose, only the gateway publishes a host port — §8).
 
 ## 2. Data ownership (non-negotiable)
 
@@ -144,6 +145,61 @@ Switching a service from host to container is a one-line change of
 
 ## 7. Deployment target
 
-A single Linux VM running this same Compose file (plus, later, the application
-containers) with a different `.env`. Nothing in the stack assumes more than one
-machine, and the whole thing fits in ~2 GB of RAM.
+A single Linux VM running the same three Compose files with a different
+`.env`. Nothing in the stack assumes more than one machine; measured footprint
+with everything running is ~3.0 GiB (see docs/README.md → Troubleshooting).
+
+## 8. As built (Step 8) — services, stores, transports
+
+```
+                          host / browser
+                                │  HTTP :4000  (the ONLY published application port)
+                                ▼
+  ┌──────────────────────────────────────────────────────────────────────────────────────────┐
+  │ Docker network orderflow-net                                                             │
+  │                                                                                          │
+  │   api-gateway (Node)  Clerk JWT → X-User-Id · X-Request-Id · public: /api/catalog,       │
+  │        │              /api/payment-webhooks (HMAC-verified by Payment)                    │
+  │        ├─ HTTP ─► catalog (Node) ──── mongodb/catalog_db                                  │
+  │        ├─ HTTP ─► cart (Node) ─────── redis (cache) + mongodb/cart_db      ─HTTP─► catalog │
+  │        ├─ HTTP ─► order (Java) ────── postgres/order_db  (orders, history, outbox, inbox) │
+  │        │             │  HTTP /snapshot ► cart      HTTP /products/prices ► catalog        │
+  │        │             │  HTTP /reserve  ► inventory (Java) ── postgres/inventory_db        │
+  │        │             │  HTTP /payments ► payment (Java) ──── postgres/payment_db ─► Razorpay │
+  │        ├─ HTTP ─► inventory  (stock reads, admin adjust)                                  │
+  │        └─ HTTP ─► payment    (payment status, webhooks)                                   │
+  │                                                                                          │
+  │   KAFKA (kafka:29092)  ── EVENTS, keyed by orderId, 3 partitions, per-consumer DLTs ──   │
+  │     order-events      order ──► inventory (confirm/release/restock), payment (refund)     │
+  │     inventory-events  inventory ──► order                                                 │
+  │     payment-events    payment ──► order                                                   │
+  │     *.dlt             parked records (infra/kafka/dlt.sh list|replay)                     │
+  │                                                                                          │
+  │   RABBITMQ (rabbitmq:5672)  ── COMMANDS, per-message ack, retry tiers, DLQ ──            │
+  │     notifications ─(order.*)─► notification.tasks ──► notification (Node)                 │
+  │        retry.5000ms / 10000ms / 20000ms ─(TTL)─► notification.tasks                       │
+  │        notifications.dlx ─(#)─► notification.tasks.dlq                                    │
+  │     notification ── mongodb/notification_db (dedupe ledger) · Clerk (recipient) · mailpit  │
+  │                                                                                          │
+  │   SETUP JOBS   kafka-init (topics)  rabbitmq-init (exchanges/queues)  — run before services │
+  │   OBSERVE      prometheus ◄─ /metrics · /actuator/prometheus · rabbitmq:15692             │
+  │                grafana (provisioned)   jaeger ◄─ OTLP from all 7 (traceparent over HTTP,   │
+  │                Kafka headers, AMQP headers, and through Order's outbox)                    │
+  └──────────────────────────────────────────────────────────────────────────────────────────┘
+   published to the host: gateway 4000 · grafana 3001 · prometheus 9090 · jaeger 16686 ·
+   kafka-ui 8090 · rabbitmq 15672 · mongo-express 8091 · redis-commander 8092 · mailpit 8093
+   (+ the backing stores' ports for host-mode development)
+```
+
+| Service | Image (multi-stage, non-root, pinned base) | Store it owns | Talks to | Publishes | Consumes |
+| --- | --- | --- | --- | --- | --- |
+| api-gateway | `node:20.19-alpine` | — | all services (HTTP), Clerk | — | — |
+| catalog | `node:20.19-alpine` | `catalog_db` | — | — | — |
+| cart | `node:20.19-alpine` | `cart_db` + Redis keys `cart:*` | catalog | — | — |
+| order | `maven:3.9.11-…-17` → `eclipse-temurin:17.0.16_8-jre-alpine` | `order_db` | cart, catalog, inventory, payment | `order-events` (outbox), `notifications` (outbox) | `payment-events`, `inventory-events` (group `order-service`) |
+| inventory | same Java build | `inventory_db` | catalog (seed only) | `inventory-events` | `order-events` (group `inventory-service`) |
+| payment | same Java build | `payment_db` | Razorpay | `payment-events` | `order-events` (group `payment-service`) |
+| notification | `node:20.19-alpine` | `notification_db` | Clerk, SMTP/Mailpit | — | `notification.tasks` |
+
+Full topic/queue table, dead-letter runbooks and the outbox-vs-best-effort
+publishing difference: [messaging.md](messaging.md).

@@ -1,6 +1,7 @@
 package com.orderflow.order.kafka;
 
 import com.orderflow.order.config.OrderProperties;
+import com.orderflow.order.service.ServiceExceptions.UnknownOrderException;
 import com.orderflow.order.correlation.Correlation;
 import java.util.Map;
 
@@ -39,11 +40,18 @@ import static net.logstash.logback.argument.StructuredArguments.kv;
  * <ul>
  *   <li>{@link MalformedEventException} (not JSON, missing fields) — retrying
  *       cannot help, so it goes to the DLT immediately.</li>
- *   <li>Everything else — database unavailable, lock timeout, an event for an
- *       order this service does not know yet ({@code UnknownOrderException}) or
- *       whose checkout has not reached the needed state ({@code OrderNotReadyException})
- *       — retried, then parked. Retrying is SAFE: processed_event and the state
- *       machine make re-application a no-op.</li>
+ *   <li>{@code UnknownOrderException} — an event for an order this service
+ *       never created. Checkout COMMITS the PENDING row before Inventory or
+ *       Payment are called, so such an event can never be an ordering race:
+ *       it is foreign data (a test script, another environment) and goes to
+ *       the DLT immediately. Retrying it in place blocked its partition for
+ *       initial + initial×multiplier + … (≈7 s per record with the defaults):
+ *       39 leftover test events = the "4-minute startup lag" seen in Step 7.</li>
+ *   <li>Everything else — database unavailable, lock timeout, or an order
+ *       whose checkout has not reached the needed state yet
+ *       ({@code OrderNotReadyException}: a webhook can beat the
+ *       AWAITING_PAYMENT commit) — retried, then parked. Retrying is SAFE:
+ *       processed_event and the state machine make re-application a no-op.</li>
  * </ul>
  *
  * <p>The DLT record keeps the original key, value and headers (including
@@ -85,7 +93,7 @@ public class KafkaConsumerConfig {
         backOff.setMaxInterval(retry.maxIntervalMs());
 
         DefaultErrorHandler handler = new DefaultErrorHandler(loggingRecoverer, backOff);
-        handler.addNotRetryableExceptions(MalformedEventException.class);
+        handler.addNotRetryableExceptions(MalformedEventException.class, UnknownOrderException.class);
         handler.setAckAfterHandle(true);
         handler.setRetryListeners((record, ex, attempt) -> log.warn("order event attempt failed",
                 kv(Correlation.MDC_KEY, SagaEventsListener.correlationIdOf(record)),

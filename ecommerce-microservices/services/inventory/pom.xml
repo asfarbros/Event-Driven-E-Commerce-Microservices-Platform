@@ -76,6 +76,11 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
+    <dependency>
+      <!-- /actuator/prometheus for the Step 8 observability stack -->
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
     <!-- Structured JSON logging (one JSON object per line, like the Node services' pino output) -->
     <dependency>
       <groupId>net.logstash.logback</groupId>

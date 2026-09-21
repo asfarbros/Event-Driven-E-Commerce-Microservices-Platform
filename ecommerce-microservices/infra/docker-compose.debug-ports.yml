@@ -1,0 +1,28 @@
+# =============================================================================
+# OrderFlow — DEBUG override: publish the internal services on the host.
+# =============================================================================
+# By default only the API Gateway is reachable from the host. Add this file
+# (temporarily!) to call a service directly, e.g. to POST a webhook to Payment
+# without the gateway or to read Inventory's /stock/{id} in a demo:
+#
+#   docker compose --env-file .env -f infra/docker-compose.yml -f infra/docker-compose.services.yml \
+#                  -f infra/docker-compose.debug-ports.yml up -d
+#   …or:  ./orderflow.sh up --debug-ports
+#
+# Note: with these published, the "trust X-User-Id only because the gateway is
+# the only ingress" guarantee no longer holds on your laptop — anyone on the
+# host can talk to Cart/Order with a forged identity. Never use in a deployment.
+# =============================================================================
+services:
+  catalog:
+    ports: ["${CATALOG_PORT:?}:${CATALOG_PORT:?}"]
+  cart:
+    ports: ["${CART_PORT:?}:${CART_PORT:?}"]
+  order:
+    ports: ["${ORDER_PORT:?}:${ORDER_PORT:?}"]
+  inventory:
+    ports: ["${INVENTORY_PORT:?}:${INVENTORY_PORT:?}"]
+  payment:
+    ports: ["${PAYMENT_PORT:?}:${PAYMENT_PORT:?}"]
+  notification:
+    ports: ["${NOTIFICATION_PORT:?}:${NOTIFICATION_PORT:?}"]

@@ -18,6 +18,7 @@ import { createAuthGuard } from './middleware/auth.js';
 import { notFound, errorHandler } from './middleware/error-handler.js';
 import { createServiceProxy } from './proxy/create-proxy.js';
 import { healthRouter } from './routes/health.js';
+import { createMetrics } from './lib/metrics.js';
 
 export function createApp(config, logger, { version = '0.0.0' } = {}) {
   const app = express();
@@ -28,6 +29,8 @@ export function createApp(config, logger, { version = '0.0.0' } = {}) {
 
   app.use(requestContext());
   app.use(requestLogging(logger));
+  const metrics = createMetrics({ service: 'api-gateway' });
+  app.use(metrics.middleware());
   app.use(helmet({
     // The gateway serves an API consumed cross-origin (and later maybe images
     // via the catalog); the default same-origin CORP would block those embeds.
@@ -38,6 +41,7 @@ export function createApp(config, logger, { version = '0.0.0' } = {}) {
   app.use(bodyLimit(config));
 
   app.use(healthRouter({ version }));
+  app.get('/metrics', metrics.handler);   // Prometheus scrape (internal — the Compose network)
 
   // Route table → [guard] + proxy. The guard is mounted on the prefix (Express
   // matches whole path segments); the proxy is mounted at the root and filters

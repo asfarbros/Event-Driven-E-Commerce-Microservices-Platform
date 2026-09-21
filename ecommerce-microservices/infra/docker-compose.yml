@@ -212,6 +212,8 @@ services:
       - "${RABBITMQ_MANAGEMENT_PORT:?RABBITMQ_MANAGEMENT_PORT is required}:15672"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
+      # Step 8: also enable the built-in prometheus plugin (metrics on 15692, network-internal)
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 15s

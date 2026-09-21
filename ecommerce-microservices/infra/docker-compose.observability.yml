@@ -1,0 +1,107 @@
+# =============================================================================
+# OrderFlow — observability stack (Step 8): Prometheus + Grafana + Jaeger
+# =============================================================================
+# Layered on infra/docker-compose.yml (+ docker-compose.services.yml):
+#
+#   docker compose --env-file .env -f infra/docker-compose.yml \
+#       -f infra/docker-compose.services.yml -f infra/docker-compose.observability.yml up -d
+#   …or:  ./orderflow.sh up
+#
+#   Prometheus  http://localhost:${PROMETHEUS_PORT}   scrapes every service (infra/prometheus/prometheus.yml)
+#   Grafana     http://localhost:${GRAFANA_PORT}      datasources + dashboard provisioned from infra/grafana/ (no clicking)
+#   Jaeger      http://localhost:${JAEGER_UI_PORT}    traces; services export OTLP/HTTP to jaeger:4318 on the network
+#
+# Everything is provisioned as files under infra/ so a fresh `down -v` + `up`
+# comes back identical. Jaeger v2 keeps traces in memory (fine for demos).
+# =============================================================================
+
+x-defaults: &defaults
+  restart: unless-stopped
+  networks:
+    - orderflow
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+services:
+  prometheus:
+    <<: *defaults
+    image: prom/prometheus:v3.5.0
+    container_name: orderflow-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2d
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:?PROMETHEUS_PORT is required}:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/-/ready | grep -q Ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+
+  grafana:
+    <<: *defaults
+    image: grafana/grafana:12.1.1
+    container_name: orderflow-grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-UTC}
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:?GRAFANA_ADMIN_USER is required}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/orderflow-overview.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:?GRAFANA_PORT is required}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health | grep -q ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  jaeger:
+    <<: *defaults
+    image: jaegertracing/jaeger:2.9.0
+    container_name: orderflow-jaeger
+    environment:
+      TZ: ${TZ:-UTC}
+    ports:
+      - "${JAEGER_UI_PORT:?JAEGER_UI_PORT is required}:16686"   # UI only; OTLP (4317/4318) stays on the network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:13133/status | grep -q StatusOK"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 384M

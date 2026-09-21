@@ -31,13 +31,20 @@ export function createRecipientResolver(cfg, logger) {
   async function lookup(userId) {
     const url = `${cfg.clerkApiUrl}/v1/users/${encodeURIComponent(userId)}`;
     let res;
-    try {
-      res = await fetch(url, {
-        headers: { Authorization: `Bearer ${cfg.clerkSecretKey}`, Accept: 'application/json' },
-        signal: AbortSignal.timeout(cfg.clerkTimeoutMs),
-      });
-    } catch (err) {
-      throw new Error(`clerk user lookup failed: ${err.cause?.code || err.name}: ${err.message}`);
+    // A TLS handshake reset (ECONNRESET before the request was even sent) is
+    // safe to retry immediately; anything else goes to the queue-level backoff.
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        res = await fetch(url, {
+          headers: { Authorization: `Bearer ${cfg.clerkSecretKey}`, Accept: 'application/json' },
+          signal: AbortSignal.timeout(cfg.clerkTimeoutMs),
+        });
+        break;
+      } catch (err) {
+        const code = err.cause?.code || err.name;
+        if (code === 'ECONNRESET' && attempt < 3) { await new Promise((r) => setTimeout(r, 250 * attempt)); continue; }
+        throw new Error(`clerk user lookup failed: ${code}: ${err.cause?.message || err.message}`);
+      }
     }
     if (res.status === 404) throw new UnprocessableError('user_not_found', `user ${userId} does not exist in Clerk`);
     if (res.status === 401 || res.status === 403) throw new Error(`clerk rejected the secret key (HTTP ${res.status}) — check CLERK_SECRET_KEY`);

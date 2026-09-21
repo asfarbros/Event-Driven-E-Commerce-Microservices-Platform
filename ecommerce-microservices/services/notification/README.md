@@ -72,6 +72,9 @@ prefetch, in-flight), the topology it bound to, the retry schedule, the
 ledger (Mongo state, retention), the channel, the recipient source, and the
 counters `received / sent / duplicates / retried / deadLettered /
 unprocessable / requeued / inFlight`. `GET /ready` is 200 only while consuming.
+`GET /metrics` (Step 8) exposes the same counters for Prometheus as
+`notification_messages_total{outcome}`, `notification_in_flight` and
+`notification_rabbitmq_connected`, plus process defaults.
 `status` is `ok`, `degraded` (reconnecting, or ledger down — deliveries are
 retried, never sent un-deduplicated) or `unhealthy`.
 

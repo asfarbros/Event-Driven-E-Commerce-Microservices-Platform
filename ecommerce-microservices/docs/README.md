@@ -30,9 +30,10 @@ See [architecture.md](architecture.md) for the data-ownership and messaging rule
 | Payment | Java 17 + Spring Boot 3 | PostgreSQL `payment_db` | Kafka producer + consumer, Razorpay | `PAYMENT_PORT` = 8083 |
 | Notification Worker | Node.js (headless) | MongoDB `notification_db` (dedupe ledger only) | RabbitMQ consumer (retry queues + DLQ), SMTP/Mailpit or console | `NOTIFICATION_PORT` = 4003 (health only) |
 
-> **Progress:** Steps 0 (infrastructure), 1 (API Gateway), 2 (Catalog),
-> 3 (Cart), 4 (Inventory), 5 (Payment), 6 (Order) and 7 (Notification Worker)
-> are done. Next: Step 8 (wiring + containerising the services).
+> **Progress:** Steps 0–8 are done: every service is containerised, `./orderflow.sh up`
+> brings the whole system up, and the eight end-to-end scenarios in
+> [`scripts/scenarios.mjs`](../scripts/scenarios.mjs) / [`scripts/chaos.mjs`](../scripts/chaos.mjs)
+> have been run against it (results in the Step 8 report). Next: Step 9 (frontend).
 
 ## Repository layout
 
@@ -61,18 +62,72 @@ ecommerce-microservices/
 | Maven | none needed | Each Java service ships the Maven wrapper (`./mvnw` / `mvnw.cmd`), which downloads Maven 3.9.16 on first use. |
 | Git | any recent | `core.autocrlf` may be on; `.gitattributes` keeps shell scripts LF anyway. |
 
-## Running the infrastructure
+## Running everything — one command (Step 8)
 
 All commands run from the **project root** (the folder containing `.env`).
-Compose reads credentials and ports from `.env` via `--env-file`.
 
 First time only:
 
 ```bash
-cp .env.example .env      # then edit the change_me_* values (any letters/digits/_)
+cp .env.example .env      # then edit the change_me_* values, the Clerk keys, the Razorpay keys and SMOKE_CLERK_USER_ID
 ```
 
-Start everything (detached) and wait for health:
+Then:
+
+```bash
+./orderflow.sh up          # builds the 7 service images, starts infra + messaging setup + services + observability,
+                           # waits until every container is healthy, seeds catalog + inventory (idempotent)
+./orderflow.sh smoke       # happy path through the gateway, 12 checks, pass/fail   (needs node >= 20 on the host)
+./orderflow.sh ps | logs order | stats | topics | queues
+./orderflow.sh down        # keep data        ./orderflow.sh down -v   # wipe volumes (cold start next time)
+```
+
+Measured on the Step 8 laptop: cold start from empty volumes to
+"all healthy + seeded" in **94 s**; the smoke test passes in ~10 s right
+after. Flags: `--no-build` (reuse images), `--no-observability` (no
+Prometheus/Grafana/Jaeger, tracing off), `--debug-ports` (publish the internal
+services on the host — dev only, see below).
+
+Under the hood it is three Compose files layered together, which you can also
+run by hand:
+
+```bash
+docker compose --env-file .env -f infra/docker-compose.yml -f infra/docker-compose.services.yml \
+               -f infra/docker-compose.observability.yml up -d --build
+```
+
+| File | Contains |
+| --- | --- |
+| `infra/docker-compose.yml` | Postgres, MongoDB, Redis, Kafka, RabbitMQ, Mailpit + the management UIs (usable alone for host-mode development, as in Steps 1–7) |
+| `infra/docker-compose.services.yml` | `kafka-init` / `rabbitmq-init` (the declarative topology jobs) + the 7 services, with `depends_on: service_healthy`, healthchecks, memory limits |
+| `infra/docker-compose.observability.yml` | Prometheus, Grafana (provisioned), Jaeger |
+| `infra/docker-compose.debug-ports.yml` | optional: publishes catalog/cart/order/inventory/payment/notification ports on the host |
+
+### Host vs container addresses
+
+Every service reads the same root `.env`. Its addresses are the
+**host-published** ones (`localhost:5432`, `localhost:9092`,
+`http://localhost:4001`, …), so `npm start` / `java -jar` on the host keep
+working. In containers the same things live at their **service names and
+internal ports** (`postgres:5432`, `kafka:29092`, `mongodb:27017`,
+`redis:6379`, `rabbitmq:5672`, `http://catalog:4001`, `mailpit:1025`), so
+`docker-compose.services.yml` overrides only the address-bearing variables
+per container — rebuilt from the `.env` pieces (user, password, db name), so no
+credential is repeated. Kafka's two listeners (`localhost:9092` / `kafka:29092`)
+exist exactly for this. Only the **API Gateway** publishes a host port
+(`GATEWAY_PORT`); everything else is reachable on the Docker network only —
+add `--debug-ports` to reach a service directly (this also removes the
+"only the gateway can inject `X-User-Id`" guarantee on your laptop, so never
+in a deployment).
+
+Seeding: `./orderflow.sh seed` runs Catalog's `scripts/seed.js` and
+Inventory's `seed` profile inside their containers; both are idempotent
+(upsert by SKU / product id). `up` runs it automatically.
+
+## Running the infrastructure only (host-mode development)
+
+Start the backing services and run the application services on the host,
+exactly as in Steps 1–7:
 
 ```bash
 docker compose --env-file .env -f infra/docker-compose.yml up -d
@@ -246,7 +301,29 @@ change the variable — nothing else needs to change.
 | redis-commander | <http://localhost:8092> | `REDIS_COMMANDER_PORT` | login form: `REDIS_COMMANDER_USER` / `REDIS_COMMANDER_PASSWORD` |
 | Mailpit (SMTP test inbox for the Notification Worker) | <http://localhost:8093> · SMTP on 1025 | `MAILPIT_UI_PORT`, `MAILPIT_SMTP_PORT` | none |
 
-### Application services (built in later steps — reserved now so nothing collides)
+### Observability (Step 8 — `infra/docker-compose.observability.yml`)
+
+| UI | URL | `.env` variables | Login |
+| --- | --- | --- | --- |
+| Grafana — dashboard *OrderFlow — Overview* (request rate, 5xx rate, p50/p95 latency per service, Kafka consumer lag, RabbitMQ queue depth, notification outcomes, circuit breakers, memory) | <http://localhost:3001> | `GRAFANA_PORT` | `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` |
+| Prometheus — 10 scrape targets (7 services, RabbitMQ ×2, itself) | <http://localhost:9090/targets> | `PROMETHEUS_PORT` | none |
+| Jaeger — distributed traces (OpenTelemetry, OTLP) | <http://localhost:16686> | `JAEGER_UI_PORT` | none |
+
+Metrics: the Node services expose `GET /metrics` (prom-client, with an
+`http_server_requests_seconds` histogram named and labelled like Spring
+Boot's so one query covers all seven); the Java services expose
+`/actuator/prometheus` (Micrometer); RabbitMQ its prometheus plugin
+(`/metrics` + `/metrics/detailed?family=queue_coarse_metrics` for per-queue
+depth). Tracing: the Java services run the OpenTelemetry Java agent (shipped in
+the image, enabled by `JAVA_TOOL_OPTIONS=-javaagent:…` in Compose), the Node
+services `@opentelemetry/auto-instrumentations-node/register`; both export
+OTLP/HTTP to `jaeger:4318` and propagate W3C `traceparent` through HTTP,
+Kafka record headers and AMQP headers. Order stores the `traceparent` in its
+outbox row and restores it when the relay publishes, so a trace does not end
+at the database. Everything is provisioned from files under `infra/` — a
+`down -v` / `up` comes back identical, nothing to click.
+
+### Application services (in containers only the gateway is published; the others need `--debug-ports`)
 
 | Service | Host port | `.env` variable |
 | --- | --- | --- |
@@ -260,6 +337,22 @@ change the variable — nothing else needs to change.
 | Frontend (Vite dev server) | 5173 | `CORS_ALLOWED_ORIGINS` |
 
 ## Verify it works
+
+With the full stack (`./orderflow.sh up`), the fastest check is the smoke test
+and then the scenario scripts, all through the gateway with a real Clerk token:
+
+```bash
+./orderflow.sh smoke                          # 12 checks: health → token → browse → cart → checkout → webhook → CONFIRMED → stock → payment → notification
+node scripts/scenarios.mjs happy|oos|payfail|abandon|cancel|concurrency   # Part E scenarios 1–6, with database dumps
+node scripts/chaos.mjs kafka|rabbitmq|inventory                            # scenario 7: stop a dependency mid-checkout
+```
+
+Scenario 5 needs Payment pointed at the Razorpay test double (a refund must
+reference a payment the provider knows): run `services/payment/scripts/razorpay-stub.mjs`
+on the network and pass `--stub http://localhost:9095` — see the script headers.
+
+The checks below are for the infrastructure-only start.
+
 
 Run these after `up -d`. Kafka takes the longest (~30–40 s to report healthy).
 
@@ -343,6 +436,17 @@ Run these after `up -d`. Kafka takes the longest (~30–40 s to report healthy).
 | Kafka container restarts with `Invalid cluster.id` | `KAFKA_CLUSTER_ID` changed after the volume was formatted. Either restore the old id or `down -v`. |
 | Kafka UI shows the cluster `Offline` | It connects over `kafka:29092`; wait for `orderflow-kafka` to be healthy, then refresh. |
 | A service on the host cannot reach Kafka | Use `localhost:9092` (EXTERNAL listener). `kafka:29092` only resolves inside the Docker network. |
+| `./orderflow.sh up` waits forever on `orderflow-jaeger` | Jaeger v2's readiness is `GET :13133/status` (healthcheckv2), not `/`. Fixed in the compose file; if you change the Jaeger version, check the healthcheck path. |
+| `bash infra/kafka/create-topics.sh` → `.env: line N: syntax error near unexpected token 'newline'` | A `.env` value contains shell metacharacters (`<`, `>`, spaces) unquoted. Quote it: `NOTIFICATION_FROM="OrderFlow <no-reply@…>"`. dotenv, Compose and the Java loader all strip double quotes. |
+| Order's consumer takes minutes to "wake up" / `inventory-events` lag stays > 0 | Records for orders Order never created (test scripts, another environment) were retried in place (1 s + 2 s + 4 s each) and blocked the partition. Since Step 8 `UnknownOrderException` is not retried — straight to `inventory-events.order.dlt`. Inspect with `bash infra/kafka/dlt.sh list inventory-events.order.dlt`. |
+| Notification worker logs `clerk user lookup failed: ECONNRESET` / `TimeoutError` and retries | The TLS handshake to `api.clerk.com` from Docker Desktop's NAT (and from this laptop in general) is slow (3–4 s) and occasionally reset. The worker retries a reset in-process, then through its 5 s / 10 s / 20 s queue backoff; `NOTIFICATION_CLERK_TIMEOUT_MS` is 10 s for that reason. `NOTIFICATION_RECIPIENT_SOURCE=static` avoids Clerk entirely. |
+| The smoke test / scenarios fail with `fetch failed … ECONNRESET` on the Clerk call | Same network issue on the host; the scripts retry up to 4 times. Re-run. |
+| `docker compose build` fails with `failed to fetch oauth token … forcibly closed` | Docker Hub's auth endpoint reset the connection (same laptop network issue). Re-run; the layers are cached. |
+| RabbitMQ management UI / API shows a queue at 0 messages while `checkQueue` says 1 | The management API's per-queue counters are sampled and lag by several seconds. The worker's `scripts/queues.mjs` and `dlq.mjs` read exact counts over AMQP. |
+| A service container is `unhealthy` after a dependency outage (e.g. Order after Kafka was stopped) | `/ready` returns 503 while a required dependency is down and the container stays running (Docker does not restart on unhealthy); it recovers by itself when the dependency returns (Kafka clients, Spring AMQP and the worker all reconnect). |
+| Sending SIGTERM to a Node process on Windows kills it instantly (no graceful shutdown) | Windows cannot deliver SIGTERM to another process. Ctrl-C (SIGINT) in its terminal works, and in containers (`docker stop`) SIGTERM works normally. |
+| Java images are ~460 MB, Node images ~320 MB | The JRE base is ~200 MB; the OpenTelemetry auto-instrumentation bundle adds ~150 MB of `node_modules` to each Node image. The app layers themselves are tiny (Java app layer 0.8 MB) and cache well. |
+| Whole stack memory | ~3.0 GiB with everything running (services 1.3 GiB, infra 1.2 GiB — Kafka alone ~540 MiB, observability 0.3 GiB, UIs 0.5 GiB). Comfortable on 16 GB; on 8 GB use `--no-observability` and stop the UI containers. |
 
 ## Build order for the next steps
 
@@ -355,5 +459,5 @@ Each step is self-contained and ends with a working, verified piece:
 5. ~~**Step 5 — Payment Service**~~ ✅ done (Spring Boot, `payment_db`, Razorpay test mode, signed webhooks, refunds, reconciliation).
 6. ~~**Step 6 — Order Service**~~ ✅ done (Spring Boot, `order_db`, sync/async checkout, outbox, breakers, RabbitMQ commands).
 7. ~~**Step 7 — Notification Worker**~~ ✅ done (headless RabbitMQ consumer, manual acks + prefetch, tiered retry queues with backoff, DLQ with reasons + replay, MongoDB dedupe ledger, console/SMTP channels, Mailpit).
-8. **Step 8 — Wiring** (end-to-end saga, containerising the services, `depends_on` health gates).
+8. ~~**Step 8 — Wiring**~~ ✅ done (7 Dockerfiles, layered Compose with health-gated start-up and init jobs, `./orderflow.sh up`/`smoke`, Prometheus + Grafana + Jaeger with connected traces across Kafka/RabbitMQ, 8 scenarios incl. chaos and cold start, Kafka DLT tooling).
 9. **Step 9 — Frontend** (React + Vite + Clerk storefront).
